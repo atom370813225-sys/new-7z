@@ -55,6 +55,70 @@ public:
   METHOD(Read,(void* data,UInt32 size,UInt32* processed)){DWORD read=0;const BOOL ok=ReadFile(file,data,size,&read,nullptr);if(processed)*processed=read;return ok?S_OK:HRESULT_FROM_WIN32(GetLastError());}
   METHOD(Seek,(Int64 offset,UInt32 origin,UInt64* pos)){LARGE_INTEGER move{},result{};move.QuadPart=offset;if(!SetFilePointerEx(file,move,&result,origin))return HRESULT_FROM_WIN32(GetLastError());if(pos)*pos=result.QuadPart;return S_OK;}
 };
+static std::wstring volumePath(const std::wstring& base,UInt64 index){
+  auto number=std::to_wstring(index+1);return base+L"."+std::wstring(number.size()<3?3-number.size():0,L'0')+number;
+}
+// A seekable logical stream: 7z rewrites its header after writing the payload.
+// Only one volume handle is kept open, even for very large volume sets.
+class VolumeOutput final:public IOutStream {
+  std::wstring base;UInt64 cap,position=0,length=0,count=0,current=UINT64_MAX;HANDLE file=INVALID_HANDLE_VALUE;
+  HRESULT select(UInt64 index){
+    if(current==index)return S_OK;
+    if(file!=INVALID_HANDLE_VALUE){CloseHandle(file);file=INVALID_HANDLE_VALUE;current=UINT64_MAX;}
+    while(count<=index){auto path=volumePath(base,count);HANDLE created=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);if(created==INVALID_HANDLE_VALUE)return HRESULT_FROM_WIN32(GetLastError());CloseHandle(created);++count;}
+    file=CreateFileW(volumePath(base,index).c_str(),GENERIC_WRITE,0,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE)return HRESULT_FROM_WIN32(GetLastError());current=index;return S_OK;
+  }
+public:
+  VolumeOutput(const wchar_t* path,UInt64 size):base(path),cap(size){}
+  ~VolumeOutput(){if(file!=INVALID_HANDLE_VALUE)CloseHandle(file);}
+  REFS
+  METHOD(QueryInterface,(REFIID iid,void** out)){*out=nullptr;if(iid==IID_IUnknown||iid==IID_ISequentialOutStream||iid==IID_IOutStream)*out=static_cast<IOutStream*>(this);if(!*out)return E_NOINTERFACE;AddRef();return S_OK;}
+  METHOD(Write,(const void* data,UInt32 size,UInt32* processed)){
+    if(processed)*processed=0;if(size>INT64_MAX-position)return E_INVALIDARG;
+    auto bytes=static_cast<const BYTE*>(data);UInt32 done=0;
+    while(done<size){HRESULT hr=select(position/cap);if(FAILED(hr))return hr;LARGE_INTEGER offset{};offset.QuadPart=position%cap;if(!SetFilePointerEx(file,offset,nullptr,FILE_BEGIN))return HRESULT_FROM_WIN32(GetLastError());DWORD n=0,chunk=static_cast<DWORD>(std::min<UInt64>(size-done,cap-position%cap));if(!WriteFile(file,bytes+done,chunk,&n,nullptr))return HRESULT_FROM_WIN32(GetLastError());if(n!=chunk)return E_FAIL;position+=n;done+=n;length=std::max(length,position);if(processed)*processed=done;}
+    return S_OK;
+  }
+  METHOD(Seek,(Int64 offset,UInt32 origin,UInt64* pos)){
+    UInt64 start=origin==FILE_BEGIN?0:origin==FILE_CURRENT?position:length;if(origin>FILE_END)return E_INVALIDARG;
+    if(offset<0){UInt64 distance=UInt64(-(offset+1))+1;if(distance>start)return E_INVALIDARG;position=start-distance;}
+    else{if(UInt64(offset)>INT64_MAX-start)return E_INVALIDARG;position=start+offset;}
+    if(pos)*pos=position;return S_OK;
+  }
+  METHOD(SetSize,(UInt64 size)){
+    if(size>INT64_MAX)return E_INVALIDARG;UInt64 needed=size?((size-1)/cap+1):1;
+    for(UInt64 index=0;index<needed;++index){HRESULT hr=select(index);if(FAILED(hr))return hr;LARGE_INTEGER end{};end.QuadPart=index+1<needed?cap:size-index*cap;if(!SetFilePointerEx(file,end,nullptr,FILE_BEGIN)||!SetEndOfFile(file))return HRESULT_FROM_WIN32(GetLastError());}
+    if(file!=INVALID_HANDLE_VALUE){CloseHandle(file);file=INVALID_HANDLE_VALUE;current=UINT64_MAX;}
+    while(count>needed){if(!DeleteFileW(volumePath(base,count-1).c_str()))return HRESULT_FROM_WIN32(GetLastError());--count;}length=size;return S_OK;
+  }
+};
+class VolumeInput final:public IInStream {
+  std::wstring base;std::vector<UInt64> ends;UInt64 position=0,current=UINT64_MAX;HANDLE file=INVALID_HANDLE_VALUE;
+public:
+  explicit VolumeInput(const wchar_t* path):base(path){
+    base.resize(base.size()-4);
+    for(UInt64 index=0;;++index){WIN32_FILE_ATTRIBUTE_DATA info{};if(!GetFileAttributesExW(volumePath(base,index).c_str(),GetFileExInfoStandard,&info))break;
+      UInt64 size=(UInt64(info.nFileSizeHigh)<<32)|info.nFileSizeLow;if(!size||size>INT64_MAX-(ends.empty()?0:ends.back()))break;ends.push_back(size+(ends.empty()?0:ends.back()));}
+  }
+  ~VolumeInput(){if(file!=INVALID_HANDLE_VALUE)CloseHandle(file);}
+  REFS
+  METHOD(QueryInterface,(REFIID iid,void** out)){*out=nullptr;if(iid==IID_IUnknown||iid==IID_ISequentialInStream||iid==IID_IInStream)*out=static_cast<IInStream*>(this);if(!*out)return E_NOINTERFACE;AddRef();return S_OK;}
+  METHOD(Read,(void* data,UInt32 size,UInt32* processed)){
+    if(processed)*processed=0;UInt32 done=0;
+    while(done<size&&!ends.empty()&&position<ends.back()){
+      auto index=static_cast<UInt64>(std::upper_bound(ends.begin(),ends.end(),position)-ends.begin());
+      if(current!=index){if(file!=INVALID_HANDLE_VALUE)CloseHandle(file);file=CreateFileW(volumePath(base,index).c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);current=index;if(file==INVALID_HANDLE_VALUE)return HRESULT_FROM_WIN32(GetLastError());}
+      LARGE_INTEGER offset{};offset.QuadPart=position-(index?ends[index-1]:0);if(!SetFilePointerEx(file,offset,nullptr,FILE_BEGIN))return HRESULT_FROM_WIN32(GetLastError());
+      DWORD n=0,chunk=static_cast<DWORD>(std::min<UInt64>(size-done,ends[index]-position));if(!ReadFile(file,static_cast<BYTE*>(data)+done,chunk,&n,nullptr))return HRESULT_FROM_WIN32(GetLastError());if(!n)return DataInvalid;position+=n;done+=n;if(processed)*processed=done;
+    }return S_OK;
+  }
+  METHOD(Seek,(Int64 offset,UInt32 origin,UInt64* pos)){
+    UInt64 start=origin==FILE_BEGIN?0:origin==FILE_CURRENT?position:(ends.empty()?0:ends.back());if(origin>FILE_END)return E_INVALIDARG;
+    if(offset<0){UInt64 distance=UInt64(-(offset+1))+1;if(distance>start)return E_INVALIDARG;position=start-distance;}
+    else{if(UInt64(offset)>INT64_MAX-start)return E_INVALIDARG;position=start+offset;}if(pos)*pos=position;return S_OK;
+  }
+};
 class Output final:public IOutStream {
   HANDLE file=INVALID_HANDLE_VALUE;
 public:
@@ -80,15 +144,17 @@ public:
   METHOD(CryptoGetTextPassword,(BSTR* pw)){return status.getPassword(pw);}
 };
 struct Archive {
-  Ptr<IInArchive> archive;Ptr<Input> input;Status status;
+  Ptr<IInArchive> archive;Ptr<IInStream> input;Status status;
   Archive(const wchar_t* pw,Progress cb,void* ctx):status(pw,cb,ctx){}
   ~Archive(){if(archive.p)archive->Close();}
   HRESULT open(const wchar_t* path){
     if(!createObject)return E_UNEXPECTED;
-    input.p=new Input(path);if(!input->valid())return HRESULT_FROM_WIN32(GetLastError());
+    std::wstring name=path;bool split=name.size()>4&&name.substr(name.size()-4)==L".001";
+    if(split)input.p=new VolumeInput(path);else{auto stream=new Input(path);input.p=stream;if(!stream->valid())return HRESULT_FROM_WIN32(GetLastError());}
     using Count=HRESULT(WINAPI*)(UInt32*);auto countFn=reinterpret_cast<Count>(GetProcAddress(engine,"GetNumberOfFormats"));UInt32 count=0;HRESULT result=countFn(&count);if(FAILED(result))return result;
     std::vector<UInt32> order;std::wstring ext=path;auto dot=ext.find_last_of(L'.');ext=dot==std::wstring::npos?L"":ext.substr(dot+1);std::transform(ext.begin(),ext.end(),ext.begin(),::towlower);
     for(UInt32 i=0;i<count;i++){Variant v;getHandlerProp(i,NArchive::NHandlerPropID::kExtension,&v.v);bool match=false;if(v.v.vt==VT_BSTR){std::wstring exts=v.v.bstrVal;size_t start=0;while(start<exts.size()){auto end=exts.find(L' ',start);if(exts.substr(start,end==std::wstring::npos?end:end-start)==ext){match=true;break;}if(end==std::wstring::npos)break;start=end+1;}}if(match)order.insert(order.begin(),i);else order.push_back(i);}
+    if(split){order.clear();ext=name.substr(0,name.size()-4);auto dot=ext.find_last_of(L'.');ext=dot==std::wstring::npos?L"":ext.substr(dot+1);std::transform(ext.begin(),ext.end(),ext.begin(),::towlower);for(UInt32 i=0;i<count;i++){Variant v;getHandlerProp(i,NArchive::NHandlerPropID::kExtension,&v.v);std::wstring exts=v.v.vt==VT_BSTR?v.v.bstrVal:L"";if(exts==L"001")continue;if((L" "+exts+L" ").find(L" "+ext+L" ")!=std::wstring::npos)order.insert(order.begin(),i);else order.push_back(i);}}
     Ptr<OpenCallback> callback;callback.p=new OpenCallback(status);
     for(auto i:order){if(FAILED(status.report(0)))return E_ABORT;Variant v;if(FAILED(getHandlerProp(i,NArchive::NHandlerPropID::kClassID,&v.v))||v.v.vt!=VT_BSTR||SysStringByteLen(v.v.bstrVal)!=sizeof(GUID))continue;GUID id;memcpy(&id,v.v.bstrVal,sizeof(id));Ptr<IInArchive> candidate;if(FAILED(createObject(&id,&IID_IInArchive,reinterpret_cast<void**>(candidate.out()))))continue;input->Seek(0,FILE_BEGIN,nullptr);const UInt64 check=1<<23;result=candidate->Open(input.p,&check,callback.p);if(result==S_OK){archive.p=candidate.p;candidate.p=nullptr;return S_OK;}candidate->Close();if(status.passwordAsked)return PasswordRequired;}
     errorText=L"Unsupported or damaged archive";return DataInvalid;
@@ -432,7 +498,7 @@ API int __cdecl NzExtractBatch(const wchar_t* path,const wchar_t* password,const
   }catch(...){return E_OUTOFMEMORY;}
 }
 API int __cdecl NzTest(const wchar_t* path,const wchar_t* password,Progress progress,void* ctx){try{Archive a(password,progress,ctx);HRESULT hr=a.open(path);if(FAILED(hr))return hr;Ptr<ExtractCallback> callback;callback.p=new ExtractCallback(a.status,nullptr);hr=a.archive->Extract(nullptr,UInt32(-1),1,callback.p);return FAILED(hr)?hr:callback->result;}catch(...){return E_FAIL;}}
-API int __cdecl NzCreate(const wchar_t* path,int format,int level,const wchar_t* method,const wchar_t* password,int encryptNames,const wchar_t* const* paths,const wchar_t* const* names,UInt32 count,Progress progress,void* ctx){try{if(!createObject)return E_UNEXPECTED;if(format<0||format>2)return E_INVALIDARG;const BYTE handler=format==1?1:format==2?0xEE:7;GUID cls={0x23170F69,0x40C1,0x278A,{0x10,0,0,1,0x10,handler,0,0}};Ptr<IOutArchive> archive;HRESULT hr=createObject(&cls,&IID_IOutArchive,reinterpret_cast<void**>(archive.out()));if(FAILED(hr))return hr;Ptr<ISetProperties> props;if(SUCCEEDED(archive->QueryInterface(IID_ISetProperties,reinterpret_cast<void**>(props.out())))){const wchar_t* keys[4];PROPVARIANT values[4]{};UInt32 n=0;keys[n]=L"x";values[n].vt=VT_UI4;values[n].ulVal=level;n++;if(format!=2&&method&&*method){keys[n]=format==1?L"m":L"0";if(format==1&&_wcsicmp(method,L"Copy")==0){values[n].vt=VT_UI4;values[n].ulVal=0;}else{values[n].vt=VT_BSTR;values[n].bstrVal=SysAllocString(method);}n++;}if(password&&*password){if(format==1){keys[n]=L"em";values[n].vt=VT_BSTR;values[n].bstrVal=SysAllocString(L"AES256");n++;}else if(format==0){keys[n]=L"he";values[n].vt=VT_BOOL;values[n].boolVal=encryptNames?VARIANT_TRUE:VARIANT_FALSE;n++;}}hr=props->SetProperties(keys,values,n);for(UInt32 i=0;i<n;i++)PropVariantClear(&values[i]);if(FAILED(hr))return hr;}Status status(password,progress,ctx);Ptr<Output> output;output.p=new Output(path,UINT64_MAX);if(!output->valid())return HRESULT_FROM_WIN32(GetLastError());Ptr<UpdateCallback> callback;callback.p=new UpdateCallback(status,paths,names);hr=archive->UpdateItems(output.p,count,callback.p);return FAILED(hr)?hr:callback->result;}catch(...){return E_FAIL;}}
+API int __cdecl NzCreate(const wchar_t* path,int format,int level,const wchar_t* method,const wchar_t* password,int encryptNames,const wchar_t* const* paths,const wchar_t* const* names,UInt32 count,Progress progress,void* ctx,UInt64 volumeSize){try{if(!createObject)return E_UNEXPECTED;if(volumeSize&&volumeSize<(1<<20))return E_INVALIDARG;if(format<0||format>2)return E_INVALIDARG;const BYTE handler=format==1?1:format==2?0xEE:7;GUID cls={0x23170F69,0x40C1,0x278A,{0x10,0,0,1,0x10,handler,0,0}};Ptr<IOutArchive> archive;HRESULT hr=createObject(&cls,&IID_IOutArchive,reinterpret_cast<void**>(archive.out()));if(FAILED(hr))return hr;Ptr<ISetProperties> props;if(SUCCEEDED(archive->QueryInterface(IID_ISetProperties,reinterpret_cast<void**>(props.out())))){const wchar_t* keys[4];PROPVARIANT values[4]{};UInt32 n=0;keys[n]=L"x";values[n].vt=VT_UI4;values[n].ulVal=level;n++;if(format==1&&volumeSize){keys[n]=L"cu";values[n].vt=VT_BOOL;values[n].boolVal=VARIANT_TRUE;n++;}if(format!=2&&method&&*method){keys[n]=format==1?L"m":L"0";if(format==1&&_wcsicmp(method,L"Copy")==0){values[n].vt=VT_UI4;values[n].ulVal=0;}else{values[n].vt=VT_BSTR;values[n].bstrVal=SysAllocString(method);}n++;}if(password&&*password){if(format==1){keys[n]=L"em";values[n].vt=VT_BSTR;values[n].bstrVal=SysAllocString(L"AES256");n++;}else if(format==0){keys[n]=L"he";values[n].vt=VT_BOOL;values[n].boolVal=encryptNames?VARIANT_TRUE:VARIANT_FALSE;n++;}}hr=props->SetProperties(keys,values,n);for(UInt32 i=0;i<n;i++)PropVariantClear(&values[i]);if(FAILED(hr))return hr;}Status status(password,progress,ctx);Ptr<IOutStream> output;if(volumeSize)output.p=new VolumeOutput(path,volumeSize);else{auto stream=new Output(path,UINT64_MAX);output.p=stream;if(!stream->valid())return HRESULT_FROM_WIN32(GetLastError());}Ptr<UpdateCallback> callback;callback.p=new UpdateCallback(status,paths,names);hr=archive->UpdateItems(output.p,count,callback.p);return FAILED(hr)?hr:callback->result;}catch(...){return E_FAIL;}}
 API int __cdecl NzUpdate(const wchar_t* path,const wchar_t* output,const wchar_t* password,int zip,const UInt32* removeIndices,UInt32 removeCount,const wchar_t* const* addPaths,const wchar_t* const* addNames,UInt32 addCount,Progress progress,void* ctx){
   try{
     if(!createObject)return E_UNEXPECTED;

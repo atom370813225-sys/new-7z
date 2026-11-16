@@ -28,6 +28,13 @@ try
 {
   Save-StoreImage 50 50 'StoreLogo.png'
   Save-StoreImage 44 44 'Square44x44Logo.png'
+  # Taskbar/Alt+Tab use target-size assets. Without unplated variants Windows
+  # places even a transparent PNG on an accent-colored backplate.
+  foreach($size in @(16,20,24,30,32,36,40,44,48,60,64,72,80,96,256))
+  {
+    Save-StoreImage $size $size "Square44x44Logo.targetsize-$($size)_altform-unplated.png"
+    Save-StoreImage $size $size "Square44x44Logo.targetsize-$($size)_altform-lightunplated.png"
+  }
   Save-StoreImage 150 150 'Square150x150Logo.png'
   Save-StoreImage 310 150 'Wide310x150Logo.png' -Contain
 }

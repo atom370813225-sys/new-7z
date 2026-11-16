@@ -55,6 +55,16 @@ public sealed partial class MainWindow
         var report=new Dictionary<string,string>();
         try
         {
+            var volumes=new VolumeSizeField();ShowContent(volumes.View);Root.UpdateLayout();
+            var choice=(ComboBox)volumes.View.Children[0];var custom=(TextBox)volumes.View.Children[1];
+            if(volumes.View.ActualWidth<=0||volumes.Value!=0)throw new IOException("Volume field did not render with no split by default.");
+            choice.SelectedIndex=2;if(volumes.Value!=100L*1024*1024)throw new IOException("Volume preset mismatch.");
+            choice.SelectedIndex=7;custom.Text="1.5 GiB";Root.UpdateLayout();
+            if(custom.Visibility!=Visibility.Visible||custom.ActualHeight<=0||volumes.Value!=1610612736)throw new IOException("Custom volume field did not render or parse.");
+            custom.Text="invalid";var rejected=false;try{_=volumes.Value;}catch(ArgumentException){rejected=true;}if(!rejected)throw new IOException("Invalid volume size was accepted.");
+            custom.Text="1 MiB";volumes.SetFormat("zst");if(choice.IsEnabled||volumes.Value!=0)throw new IOException("Stream format did not disable volumes.");
+            volumes.SetFormat("7z");if(!choice.IsEnabled||volumes.Value!=1048576)throw new IOException("Volume draft was lost after switching formats.");
+            report["Volumes"]="shared main/Shell field renders; no split by default; preset/custom/invalid values; disabled stream formats; draft restored on format switch";
             SelectPage("settings");Root.UpdateLayout();
             var settingsLabels=new List<string>();
             void CollectSettingsLabels(DependencyObject node)
@@ -68,9 +78,30 @@ public sealed partial class MainWindow
             settingsLabels.Clear();CollectSettingsLabels(ContentHost);
             if(!settingsLabels.Contains(T("默认压缩格式","Default archive format"))||!settingsLabels.Contains(T("默认压缩方法","Default compression method")))throw new IOException("Compression defaults did not render.");
             report["Settings"]="rendered settings hub and the compression defaults category";
-            jobs.Add(new ArchiveJob("verification job","verification target"){Status="verification",Active=false});
+            var taskJob=new ArchiveJob("verification job","verification target"){Status="verification"};
+            var failedJob=new ArchiveJob("verification failed job","verification target"){Status="Failed: verification",Active=false,Percent=100};
+            jobs.Add(taskJob);jobs.Add(failedJob);
             SelectPage("tasks");Root.UpdateLayout();
-            report["Tasks"]="rendered a bound task card";
+            var taskContent=ContentHost.Children[0];
+            CompleteJob(taskJob);await Task.Delay(50);Root.UpdateLayout();
+            if(jobs.Contains(taskJob)||!jobs.Contains(failedJob)||!ReferenceEquals(taskContent,ContentHost.Children[0]))throw new IOException("Task completion did not remove only the successful job in place.");
+            var taskLabels=new List<string>();
+            void ReadTaskLabels(DependencyObject node)
+            {
+                if(node is TextBlock label)taskLabels.Add(label.Text);
+                for(var i=0;i<VisualTreeHelper.GetChildrenCount(node);i++)ReadTaskLabels(VisualTreeHelper.GetChild(node,i));
+            }
+            ReadTaskLabels(ContentHost);
+            if(taskLabels.Contains(taskJob.Title)||!taskLabels.Contains(failedJob.Title))throw new IOException("Completed task card remained visible or failed task disappeared.");
+            jobs.Remove(failedJob);failedJob.Cancellation.Dispose();taskJob.Cancellation.Dispose();
+            var lastJob=new ArchiveJob("verification last job","verification target");jobs.Add(lastJob);
+            SelectPage("tasks");Root.UpdateLayout();CompleteJob(lastJob);
+            await Task.Delay(50);Root.UpdateLayout();lastJob.Cancellation.Dispose();
+            if(tasksEmptyCard==null||(sharedTaskViews.Count==0&&tasksEmptyCard.Visibility!=Visibility.Visible))throw new IOException("Task empty state did not appear after the last successful job.");
+            SelectPage("home");SelectPage("tasks");Root.UpdateLayout();
+            taskLabels.Clear();ReadTaskLabels(ContentHost);
+            if(taskLabels.Contains(taskJob.Title)||taskLabels.Contains(lastJob.Title))throw new IOException("Completed task reappeared after navigation.");
+            report["Tasks"]="successful job removed in place without rebuilding the page; failed job at 100% retained; last completion shows empty state; no completed jobs after navigation";
             await OpenArchiveAsync(input,false);
             if(archive==null||entries.Count==0)throw new IOException("Archive UI did not load.");
             var firstDirectory=entries.FirstOrDefault(e=>e.IsDirectory);

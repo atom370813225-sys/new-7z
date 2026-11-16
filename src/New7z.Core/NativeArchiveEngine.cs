@@ -116,7 +116,7 @@ internal sealed class NativeArchiveEngine
         ~ArchiveDragData()=>Dispose();
     }
 
-    public Task CreateAsync(string output,IReadOnlyList<string> sources,string format="7z",int level=5,string? password=null,bool encryptNames=false,string? method=null,IProgress<EngineProgress>? progress=null,CancellationToken cancellation=default) => Task.Run(()=>
+    public Task CreateAsync(string output,IReadOnlyList<string> sources,string format="7z",int level=5,string? password=null,bool encryptNames=false,string? method=null,IProgress<EngineProgress>? progress=null,CancellationToken cancellation=default,long volumeSize=0) => Task.Run(()=>
     {
         if(format is not ("7z" or "zip" or "tar"))throw new ArgumentException(Loc.T("当前创建格式支持 7z、ZIP 和 TAR。", "Only 7z, ZIP and TAR can be created."));
         if(format=="tar"&&!string.IsNullOrEmpty(password))throw new ArgumentException(Loc.T("TAR 不支持密码，请改用 7z 或 ZIP。", "TAR does not support passwords; use 7z or ZIP instead."));
@@ -130,6 +130,7 @@ internal sealed class NativeArchiveEngine
         if(level is <0 or >9)throw new ArgumentOutOfRangeException(nameof(level));
         if(sources.Count==0)throw new ArgumentException(Loc.T("请选择要压缩的文件或文件夹。", "Select the files or folders to compress."));
         output=System.IO.Path.GetFullPath(output);
+        ArchiveVolumes.Validate(output,format,volumeSize);
         if(File.Exists(output)||Directory.Exists(output))throw new IOException(Loc.T("输出名称已存在，请更换名称，避免覆盖。", "The output name already exists. Choose another name to avoid overwriting."));
         var paths=new List<string>();var names=new List<string>();
         foreach(var source in sources.Select(System.IO.Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase))
@@ -142,18 +143,19 @@ internal sealed class NativeArchiveEngine
         var temp=output+"."+OperationId+".partial";
         try
         {
-            if(format=="zip"&&string.IsNullOrEmpty(password)&&level<=6&&(method==null||method=="Deflate"))
+            if(volumeSize==0&&format=="zip"&&string.IsNullOrEmpty(password)&&level<=6&&(method==null||method=="Deflate"))
                 FastZipWriter.Create(temp,paths,names,level,progress,cancellation);
             else
             {
                 // The ZIP handler selects Store from level 0; its "m=Copy" path is not accepted.
                 var nativeLevel=format=="zip"&&method=="Copy"?0:level;
                 var nativeMethod=format=="zip"&&method=="Copy"?null:method;
-                var callback=Callback(cancellation,progress);Check(NativeMethods.NzCreate(temp,format=="zip"?1:format=="tar"?2:0,nativeLevel,nativeMethod,password,encryptNames?1:0,paths.ToArray(),names.ToArray(),(uint)paths.Count,callback,IntPtr.Zero),cancellation);GC.KeepAlive(callback);
+                var callback=Callback(cancellation,progress);Check(NativeMethods.NzCreate(temp,format=="zip"?1:format=="tar"?2:0,nativeLevel,nativeMethod,password,encryptNames?1:0,paths.ToArray(),names.ToArray(),(uint)paths.Count,callback,IntPtr.Zero,(ulong)volumeSize),cancellation);GC.KeepAlive(callback);
             }
-            cancellation.ThrowIfCancellationRequested();File.Move(temp,output,false);
+            cancellation.ThrowIfCancellationRequested();
+            if(volumeSize>0)ArchiveVolumes.Commit(temp,output,cancellation);else File.Move(temp,output,false);
         }
-        finally { if(File.Exists(temp))File.Delete(temp); }
+        finally { if(File.Exists(temp))File.Delete(temp);if(volumeSize>0)foreach(var part in ArchiveVolumes.Parts(temp))File.Delete(part); }
     },cancellation);
 
     public static bool SupportsUpdate(string path)=>System.IO.Path.GetExtension(path).ToLowerInvariant() is ".7z" or ".zip";
@@ -207,6 +209,7 @@ internal sealed class NativeArchiveEngine
         (limits??ExtractionLimits.Default).Validate(entries);
         var zone=MarkOfTheWeb.Read(archive);
         var root=System.IO.Path.GetFullPath(destination);Directory.CreateDirectory(root);EnsureNoReparse(root);
+        var archiveParts=(archive.EndsWith(".001",StringComparison.OrdinalIgnoreCase)?ArchiveVolumes.Parts(archive[..^4]):[archive]).ToHashSet(StringComparer.OrdinalIgnoreCase);
         // Preflight every path before creating any output, including entries hidden by directory structure.
         var plans=new List<ExtractionItem>(entries.Count);
         foreach(var entry in entries)
@@ -214,7 +217,7 @@ internal sealed class NativeArchiveEngine
             cancellation.ThrowIfCancellationRequested();
             if(entry.IsLink)throw new IOException(Loc.T($"不解压链接条目：{entry.Path}", $"Link entries are not extracted: {entry.Path}"));
             var target=ResolveOutput(root,entry.Path);
-            if(string.Equals(target,archive,StringComparison.OrdinalIgnoreCase))throw new IOException(Loc.T("不能用解压内容替换源压缩包。", "Extracted content cannot replace the source archive."));
+            if(archiveParts.Contains(target))throw new IOException(Loc.T("不能用解压内容替换源压缩包或分卷。", "Extracted content cannot replace the source archive or its volumes."));
             plans.Add(new(entry,target,entry.IsDirectory?"":System.IO.Path.Combine(System.IO.Path.GetDirectoryName(target)!,".new7z-"+OperationId+"-"+entry.Index+".partial")));
         }
         foreach(var item in plans.Where(p=>p.Entry.IsDirectory)){cancellation.ThrowIfCancellationRequested();EnsureNoReparse(item.Target);Directory.CreateDirectory(item.Target);}

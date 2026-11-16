@@ -62,12 +62,15 @@ try{
  }
  Set-Content -LiteralPath "$identity/AppxManifest.xml" -Value $manifestText -Encoding utf8
  Copy-Item -LiteralPath '图标/logo.png' -Destination "$identity/Assets/logo.png" -Force
+ & "$PSScriptRoot/build-identity-resources.ps1" -PackageDirectory $identity
  $sdk=Get-ChildItem 'C:/Program Files (x86)/Windows Kits/10/bin' -Directory | Where-Object {$_.Name -match '^10\.' -and (Test-Path -LiteralPath "$($_.FullName)/x64/makeappx.exe")} | Sort-Object {[version]$_.Name} -Descending | Select-Object -First 1
  if(!$sdk){throw 'Windows SDK MakeAppx not found.'}
  $identityInput=Join-Path $projectRoot ('artifacts/identity-input-'+[guid]::NewGuid().ToString('N'))
  New-Item -ItemType Directory -Path "$identityInput/Assets" -Force | Out-Null
  Copy-Item -LiteralPath "$identity/AppxManifest.xml" -Destination "$identityInput/AppxManifest.xml"
  Copy-Item -LiteralPath "$identity/Assets/logo.png" -Destination "$identityInput/Assets/logo.png"
+ Copy-Item -LiteralPath "$identity/Assets/Store" -Destination "$identityInput/Assets/Store" -Recurse
+ Copy-Item -LiteralPath "$identity/resources.pri" -Destination "$identityInput/resources.pri"
  $identityPackage=Join-Path $projectRoot 'artifacts/New7z.ContextMenu.msix'
  & "$($sdk.FullName)/x64/makeappx.exe" pack /o /h SHA256 /d $identityInput /p $identityPackage /nv 2>&1 | Out-File -LiteralPath "$release/makeappx-build.log" -Encoding utf8
  if($LASTEXITCODE){throw 'Identity package build failed.'}

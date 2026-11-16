@@ -21,13 +21,14 @@ namespace New7z.App;
 public sealed partial class MainWindow:Window
 {
     private readonly ArchiveEngine engine=new();
-    private readonly UserSettings settings=UserSettings.Load();
+    private readonly UserSettings settings;
     private readonly SemaphoreSlim queue=new(1,1);
     private readonly ObservableCollection<ArchiveJob> jobs=[];
     private IReadOnlyList<ArchiveEntry> entries=[];
     private string? archive,password;
     private string folder="",query="",page="home";
     private string? settingsCategory;
+    private long homeVersion;
     private ListView? fileList;
     private TextBlock? countLabel;
     private TextBox? searchBox;
@@ -47,18 +48,15 @@ public sealed partial class MainWindow:Window
     private static readonly string[] ThemeCodes=["system","light","dark"];
     private static readonly string[] LanguageCodes=["system","zh","en"];
     private static readonly string[] FormatNames=["7z","zip","rar","tar","gz","bz2","xz","iso"];
-    public MainWindow(string? startupArchive=null)
+    public MainWindow(string? startupArchive=null,UserSettings? startupSettings=null)
     {
+        settings=startupSettings??UserSettings.Load();
         Loc.Language=Loc.Resolve(settings.Language);
         InitializeComponent();Title="New7z";ExtendsContentIntoTitleBar=true;SetTitleBar(TitleBar);
         SystemBackdrop=new MicaBackdrop();AppWindow.Resize(new Windows.Graphics.SizeInt32(1320,880));
         AppWindow.Closing+=OnClosing;
-        initialized=true;ApplyLanguage();SaveExplorerLanguage();ApplyTheme();ApplyIcon();WindowAppearance.ApplyIcon(this);ShowHome();
+        initialized=true;ApplyLanguage();ApplyTheme();ApplyIcon();WindowAppearance.ApplyIcon(this);ShowHome();
         Root.AllowDrop=true;Root.DragOver+=(_,e)=>UpdateDragOver(e);Root.Drop+=FilesDropped;
-        foreach(var stale in Directory.EnumerateDirectories(System.IO.Path.GetTempPath(),"New7z-drag-*"))
-        {
-            try{if(Directory.GetLastWriteTimeUtc(stale)<DateTime.UtcNow.AddDays(-2))Directory.Delete(stale,true);}catch{}
-        }
         Root.Loaded+=async(_,_)=>{
             // The built-in settings item only exists once the NavigationView has loaded.
             ApplyLanguage();
@@ -66,13 +64,41 @@ public sealed partial class MainWindow:Window
             var width=Math.Min((int)(1240*scale),area.Width-60);var height=Math.Min((int)(820*scale),area.Height-60);
             AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(area.X+(area.Width-width)/2,area.Y+(area.Height-height)/2,width,height));
             var launchArgs=Environment.GetCommandLineArgs().Skip(1).ToArray();
+            if(launchArgs.Length==2&&launchArgs[0]=="--measure-startup")
+            {
+                var started=Process.GetCurrentProcess().StartTime.ToUniversalTime();
+                var loadedMs=(DateTime.UtcNow-started).TotalMilliseconds;
+                EventHandler<object>? firstFrame=null;
+                firstFrame=(_,_)=>{
+                    CompositionTarget.Rendering-=firstFrame;
+                    var report=new Dictionary<string,string>{{"LoadedMilliseconds",loadedMs.ToString("F1",System.Globalization.CultureInfo.InvariantCulture)},{"FirstRenderingMilliseconds",(DateTime.UtcNow-started).TotalMilliseconds.ToString("F1",System.Globalization.CultureInfo.InvariantCulture)}};
+                    File.WriteAllText(launchArgs[1],System.Text.Json.JsonSerializer.Serialize(report,AppJsonContext.Default.DictionaryStringString));
+                };
+                CompositionTarget.Rendering+=firstFrame;return;
+            }
             if(launchArgs.Length==3&&launchArgs[0]=="--verify-ui"){await VerifyUiAsync(launchArgs[1],launchArgs[2]);return;}
             if(launchArgs.Length==3&&launchArgs[0]=="--verify-drag-ui"){await PrepareDragVerificationAsync(launchArgs[1],launchArgs[2]);return;}
             if(launchArgs.Length==3&&launchArgs[0]=="--verify-drag-text"){await PrepareDragVerificationAsync(launchArgs[1],launchArgs[2],true);return;}
+            _=Task.Run(CleanupDragCache);
+            _=Task.Run(()=>{try{SaveExplorerLanguage();}catch{}});
             ShowPendingIntegrationError();
             var arg=startupArchive??launchArgs.FirstOrDefault(File.Exists);if(arg!=null)await OpenArchiveAsync(arg);
             if(settings.AutoCheckUpdates&&!AppEnvironment.IsPackaged)_=CheckForUpdatesAsync(false);
         };
+    }
+    private static void CleanupDragCache()
+    {
+        try
+        {
+            var root=System.IO.Path.GetFullPath(System.IO.Path.GetTempPath()).TrimEnd('\\')+"\\";
+            foreach(var entry in Directory.EnumerateDirectories(root,"New7z-drag-*"))
+            {
+                var path=System.IO.Path.GetFullPath(entry);
+                if(!path.StartsWith(root,StringComparison.OrdinalIgnoreCase)||!System.IO.Path.GetFileName(path).StartsWith("New7z-drag-",StringComparison.Ordinal))continue;
+                try{if(!File.GetAttributes(path).HasFlag(System.IO.FileAttributes.ReparsePoint)&&Directory.GetLastWriteTimeUtc(path)<DateTime.UtcNow.AddDays(-2))Directory.Delete(path,true);}catch{}
+            }
+        }
+        catch{}
     }
     private void ApplyLanguage()
     {
@@ -135,19 +161,22 @@ public sealed partial class MainWindow:Window
     private void RenderPage(){if(page=="archive")ShowArchive();else if(page=="tasks")ShowTasks();else if(page=="settings")ShowSettings();else ShowHome();}
     private void ShowHome()
     {
+        var version=++homeVersion;
         var content=Stack(24);content.Children.Add(Text(T("主页","Home"),28,true));content.Children.Add(Text(T("打开压缩包，或将文件打包分享。","Open an archive, or pack files to share.")));
         var actions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=10};actions.Children.Add(Button(T("打开压缩包","Open archive"),async(_,_)=>{var f=await PickArchiveAsync();if(f!=null)await OpenArchiveAsync(f);}));actions.Children.Add(Button(T("新建压缩","New archive"),async(_,_)=>await CreateDialogAsync(),true));content.Children.Add(actions);
         var drop=Stack(10);drop.Children.Add(Text(T("把文件或文件夹拖到窗口","Drop files or folders here"),22,true));drop.Children.Add(Text(T("压缩包可查看内容，普通文件可打包为 7z、ZIP 或 TAR。无需另装 7-Zip。","Open an archive to browse it, or pack files into 7z, ZIP or TAR. No separate 7-Zip needed.")));var pick=new StackPanel{Orientation=Orientation.Horizontal,Spacing=10};pick.Children.Add(Button(T("选择文件","Choose files"),async(_,_)=>{var paths=await PickFilesAsync();if(paths.Count>0)await CreateDialogAsync(paths);}));pick.Children.Add(Button(T("选择文件夹","Choose folder"),async(_,_)=>{var path=await PickFolderAsync();if(path!=null)await CreateDialogAsync([path]);}));drop.Children.Add(pick);content.Children.Add(Card(drop));
         var recent=Stack(8);recent.Children.Add(Text(T("最近使用","Recent"),18,true));
-        var unavailable=settings.Recent.Count(p=>!File.Exists(p));
+        var unavailable=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var cleanup=Button(T("清理失效记录","Remove unavailable"),(_,_)=>{settings.Recent.RemoveAll(unavailable.Contains);settings.Save();ShowHome();});cleanup.Visibility=Visibility.Collapsed;
+        var availability=new List<(string Path,TextBlock Location,Button Open,Image Icon)>();
         foreach(var path in settings.Recent.Take(12).ToList())
         {
-            var exists=File.Exists(path);
             var row=new Grid{ColumnSpacing=12};row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});row.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
-            var icon=FormatIcon(path);if(icon!=null){icon.VerticalAlignment=VerticalAlignment.Center;row.Children.Add(icon);}
+            var icon=new Image{Width=32,Height=32,VerticalAlignment=VerticalAlignment.Center};row.Children.Add(icon);
             var labels=Stack(3);labels.Children.Add(Text(System.IO.Path.GetFileName(path),14,true));
-            var location=Text(exists?path:path+T("（文件不存在）"," (file not found)"),12);location.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];labels.Children.Add(location);Grid.SetColumn(labels,1);row.Children.Add(labels);
-            var open=Button(T("打开","Open"),async(_,_)=>await OpenArchiveAsync(path));open.IsEnabled=exists;Grid.SetColumn(open,2);row.Children.Add(open);
+            var location=Text(path,12);location.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];labels.Children.Add(location);Grid.SetColumn(labels,1);row.Children.Add(labels);
+            var open=Button(T("打开","Open"),async(_,_)=>await OpenArchiveAsync(path));Grid.SetColumn(open,2);row.Children.Add(open);
+            availability.Add((path,location,open,icon));
             var remove=new Button{Content=T("移除","Remove"),Padding=new Thickness(10,4,10,4),VerticalAlignment=VerticalAlignment.Center};ToolTipService.SetToolTip(remove,T("从最近使用中移除这一条","Remove this item from Recent"));remove.Click+=(_,_)=>{settings.Recent.Remove(path);settings.Save();ShowHome();};Grid.SetColumn(remove,3);row.Children.Add(remove);
             recent.Children.Add(Card(row));
         }
@@ -155,11 +184,30 @@ public sealed partial class MainWindow:Window
         else
         {
             var actionsRow=new StackPanel{Orientation=Orientation.Horizontal,Spacing=8};
-            if(unavailable>0)actionsRow.Children.Add(Button(T($"清理失效记录（{unavailable}）",$"Remove unavailable ({unavailable})"),(_,_)=>{settings.Recent.RemoveAll(p=>!File.Exists(p));settings.Save();ShowHome();}));
+            actionsRow.Children.Add(cleanup);
             actionsRow.Children.Add(Button(T("清空最近记录","Clear recent"),async(_,_)=>{var d=Dialog(T("清空最近记录？","Clear recent items?"),Text(T("仅移除应用内记录，不删除文件。","This only clears the in-app list; files are not deleted.")),T("清空记录","Clear"));if(await ShowDialogAsync(d)==ContentDialogResult.Primary){settings.Recent.Clear();settings.Save();ShowHome();}}));
             recent.Children.Add(actionsRow);
         }
         content.Children.Add(recent);ShowContent(new ScrollViewer{Content=content,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled});
+        foreach(var item in availability)_=CheckRecentAsync(item,version,exists=>{if(!exists)unavailable.Add(item.Path);cleanup.Content=T($"清理失效记录（{unavailable.Count}）",$"Remove unavailable ({unavailable.Count})");cleanup.Visibility=unavailable.Count>0?Visibility.Visible:Visibility.Collapsed;});
+    }
+    private async Task CheckRecentAsync((string Path,TextBlock Location,Button Open,Image Icon) item,long version,Action<bool> available)
+    {
+        try
+        {
+            // Unavailable shares/removable media must not block the first frame.
+            var custom=settings.FormatIcons.GetValueOrDefault(System.IO.Path.GetExtension(item.Path).TrimStart('.').ToLowerInvariant());
+            var result=await Task.Run(()=>{
+                var icon=custom!=null&&File.Exists(custom)?custom:System.IO.Path.Combine(AppContext.BaseDirectory,"Assets","Formats",System.IO.Path.GetExtension(item.Path).TrimStart('.').ToLowerInvariant()+".png");
+                return (Exists:File.Exists(item.Path),Icon:File.Exists(icon)?icon:null);
+            });
+            if(version!=homeVersion||page!="home")return;
+            item.Open.IsEnabled=result.Exists;
+            available(result.Exists);
+            item.Location.Text=result.Exists?item.Path:item.Path+T("（文件不存在）"," (file not found)");
+            if(result.Icon!=null)item.Icon.Source=new BitmapImage(new Uri(result.Icon));
+        }
+        catch{} // Recent-item metadata is optional; opening still reports the real error.
     }
     private async Task<string?> PickArchiveAsync()
     {
@@ -175,7 +223,7 @@ public sealed partial class MainWindow:Window
         if(e.Handled)return;
         if(dragData!=null){e.Handled=true;return;}
         if(!e.DataView.Contains(StandardDataFormats.StorageItems))return;e.Handled=true;var deferral=e.GetDeferral();
-        try{var items=await e.DataView.GetStorageItemsAsync();var paths=items.Select(i=>i.Path).ToList();if(paths.Count==0)return;if(page=="archive"&&archive!=null){await AddSourcesAsync(paths);return;}if(paths.Count==1&&File.Exists(paths[0])&&new[]{".7z",".zip",".rar",".tar",".gz",".xz",".bz2",".iso",".zst",".zstd",".tzst",".lz4"}.Contains(System.IO.Path.GetExtension(paths[0]).ToLowerInvariant()))await OpenArchiveAsync(paths[0]);else if(paths.Count>0)await CreateDialogAsync(paths);}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}finally{deferral.Complete();}
+        try{var items=await e.DataView.GetStorageItemsAsync();var paths=items.Select(i=>i.Path).ToList();if(paths.Count==0)return;if(page=="archive"&&archive!=null){await AddSourcesAsync(paths);return;}if(paths.Count==1&&File.Exists(paths[0])&&new[]{".7z",".zip",".rar",".tar",".gz",".xz",".bz2",".iso",".001",".zst",".zstd",".tzst",".lz4"}.Contains(System.IO.Path.GetExtension(paths[0]).ToLowerInvariant()))await OpenArchiveAsync(paths[0]);else if(paths.Count>0)await CreateDialogAsync(paths);}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}finally{deferral.Complete();}
     }
     private async Task<string?> AskPasswordAsync()
     {
@@ -308,19 +356,21 @@ public sealed partial class MainWindow:Window
         var output=Input(T("保存为","Save as"),System.IO.Path.Combine(ShellPaths.SuggestedFolder(sources),ShellPaths.SuggestedFileName(sources,defaultFormat)));panel.Children.Add(output);
         panel.Children.Add(Button(T("选择保存文件夹","Choose folder"),async(_,_)=>{var path=await PickFolderAsync();if(path!=null)output.Text=System.IO.Path.Combine(path,System.IO.Path.GetFileName(output.Text));}));
         var format=new ComboBox{Header=T("格式","Format"),ItemsSource=formats,SelectedIndex=Math.Max(0,Array.IndexOf(formats,defaultFormat)),HorizontalAlignment=HorizontalAlignment.Stretch};
+        var volumes=new VolumeSizeField();
         var method=new ComboBox{Header=T("压缩方法","Compression method"),HorizontalAlignment=HorizontalAlignment.Stretch};
         var level=new ComboBox{Header=T("压缩级别","Compression level"),ItemsSource=new[]{T("标准","Normal"),T("更快","Faster"),T("更小","Smaller")},SelectedIndex=0,HorizontalAlignment=HorizontalAlignment.Stretch};
         void UpdateMethods(){var code=formats[format.SelectedIndex];var choices=CompressionOptions.For(code);method.ItemsSource=choices;var preferred=CompressionOptions.Default(settings,code);method.SelectedIndex=Math.Max(0,choices.ToList().FindIndex(item=>item.Value==preferred));method.IsEnabled=choices.Count>0;}
-        panel.Children.Add(format);panel.Children.Add(method);panel.Children.Add(level);
+        panel.Children.Add(format);panel.Children.Add(method);panel.Children.Add(level);panel.Children.Add(volumes.View);
         var secret=new PasswordBox{Header=T("密码（可选）","Password (optional)"),PasswordRevealMode=PasswordRevealMode.Peek};var encrypt=new CheckBox{Content=T("加密文件名（仅 7z）","Encrypt file names (7z only)"),IsEnabled=false};
         var streamHint=Text(T("Zstandard / LZ4 每次压缩一个文件；文件夹或多个文件请先打包为 TAR。","Zstandard / LZ4 compress one file; pack folders or multiple files into TAR first."),12);panel.Children.Add(streamHint);
-        void UpdateFormatState(){var noPassword=format.SelectedIndex>=2;if(noPassword)secret.Password="";secret.IsEnabled=!noPassword;level.IsEnabled=format.SelectedIndex!=2;method.IsEnabled=format.SelectedIndex<2;streamHint.Visibility=format.SelectedIndex>=3?Visibility.Visible:Visibility.Collapsed;encrypt.IsEnabled=format.SelectedIndex==0&&secret.Password.Length>0;if(!encrypt.IsEnabled)encrypt.IsChecked=false;}
+        void UpdateFormatState(){volumes.SetFormat(formats[format.SelectedIndex]);var noPassword=format.SelectedIndex>=2;if(noPassword)secret.Password="";secret.IsEnabled=!noPassword;level.IsEnabled=format.SelectedIndex!=2;method.IsEnabled=format.SelectedIndex<2;streamHint.Visibility=format.SelectedIndex>=3?Visibility.Visible:Visibility.Collapsed;encrypt.IsEnabled=format.SelectedIndex==0&&secret.Password.Length>0;if(!encrypt.IsEnabled)encrypt.IsChecked=false;}
         secret.PasswordChanged+=(_,_)=>UpdateFormatState();format.SelectionChanged+=(_,_)=>{output.Text=formats[format.SelectedIndex] is "zst" or "lz4"?System.IO.Path.Combine(System.IO.Path.GetDirectoryName(output.Text)??"",ShellPaths.SuggestedFileName(sources,formats[format.SelectedIndex])):System.IO.Path.ChangeExtension(output.Text,format.SelectedItem.ToString());UpdateMethods();UpdateFormatState();};panel.Children.Add(secret);panel.Children.Add(encrypt);UpdateMethods();UpdateFormatState();
         var error=Text("",12);error.Foreground=new SolidColorBrush(Colors.Firebrick);panel.Children.Add(error);
-        var dialog=Dialog(T("新建压缩包","New archive"),new ScrollViewer{Content=panel,MaxHeight=560,MinWidth=480},T("开始压缩","Create"));dialog.PrimaryButtonClick+=(_,e)=>{if(sources.Count==0||string.IsNullOrWhiteSpace(output.Text)){error.Text=T("请选择来源并填写输出路径。","Choose sources and an output path.");e.Cancel=true;}else if(format.SelectedIndex>=3&&(sources.Count!=1||!File.Exists(sources[0]))){error.Text=T("Zstandard 和 LZ4 每次压缩一个文件；多个文件请先打包为 TAR。","Zstandard and LZ4 compress one file; pack multiple files into TAR first.");e.Cancel=true;}else if(File.Exists(output.Text)){error.Text=T("输出文件已存在，请改用一个新名称。","The output file already exists. Choose another name.");e.Cancel=true;}};
+        long volumeSize=0;
+        var dialog=Dialog(T("新建压缩包","New archive"),new ScrollViewer{Content=panel,MaxHeight=560,MinWidth=480},T("开始压缩","Create"));dialog.PrimaryButtonClick+=(_,e)=>{try{if(sources.Count==0||string.IsNullOrWhiteSpace(output.Text))throw new ArgumentException(T("请选择来源并填写输出路径。","Choose sources and an output path."));if(format.SelectedIndex>=3&&(sources.Count!=1||!File.Exists(sources[0])))throw new ArgumentException(T("Zstandard 和 LZ4 每次压缩一个文件；多个文件请先打包为 TAR。","Zstandard and LZ4 compress one file; pack multiple files into TAR first."));volumeSize=volumes.Value;ArchiveVolumes.Validate(output.Text,formats[format.SelectedIndex],volumeSize);}catch(Exception ex){error.Text=ex.Message;e.Cancel=true;}};
         if(await ShowDialogAsync(dialog)!=ContentDialogResult.Primary)return;
         var target=output.Text;var inputs=sources.ToArray();var kind=format.SelectedItem.ToString()!;var compression=level.SelectedIndex switch{1=>1,2=>9,_=>5};var key=secret.Password;var header=encrypt.IsChecked==true;var selectedMethod=(method.SelectedItem as CompressionChoice)?.Value;
-        QueueJob(T("压缩 ","Compress ")+System.IO.Path.GetFileName(target),target,(p,ct)=>engine.CreateAsync(target,inputs,kind,compression,key,header,selectedMethod,p,ct));
+        QueueJob(T("压缩 ","Compress ")+System.IO.Path.GetFileName(target),ArchiveVolumes.FirstPath(target,volumeSize),(p,ct)=>engine.CreateAsync(target,inputs,kind,compression,key,header,selectedMethod,p,ct,volumeSize));
     }
     private async Task ExtractDialogAsync(IReadOnlyList<ArchiveEntry> selected)
     {
@@ -507,7 +557,7 @@ public sealed partial class MainWindow:Window
         {
             completedDrag.ThrowIfFailed();
             var accepted=e.DropResult!=DataPackageOperation.None||completedDrag.WasTransferred;
-            if(dragJob!=null){dragJob.Active=false;dragJob.Percent=accepted?100:0;dragJob.Status=accepted?T("已完成","Completed"):T("已取消","Cancelled");}
+            if(dragJob!=null){if(accepted)CompleteJob(dragJob);else{dragJob.Active=false;dragJob.Percent=0;dragJob.Status=T("已取消","Cancelled");}}
             Notify(accepted?T("目标已接收拖动内容。","The target received the dragged items."):T("拖动已取消，没有目标接收内容。","The drag was cancelled; no target accepted the items."),accepted?InfoBarSeverity.Success:InfoBarSeverity.Informational);
         }
         catch(ArchivePasswordException){if(dragJob!=null){dragJob.Active=false;dragJob.Status=T("失败：密码不正确","Failed: incorrect password");}password=null;Notify(T("密码不正确，请重新拖动并输入正确密码。","The password was incorrect. Drag again and enter the correct password."),InfoBarSeverity.Warning);}
@@ -533,13 +583,22 @@ public sealed partial class MainWindow:Window
     private void QueueJob(string name,string destination,Func<IProgress<EngineProgress>,CancellationToken,Task> operation,bool openTasks=true,Func<Task>? completed=null)
     {
         var job=new ArchiveJob(name,destination);job.Status=T("等待中","Waiting");jobs.Insert(0,job);if(openTasks)SelectPage("tasks");
-        _=Run();async Task Run(){bool acquired=false;try{await queue.WaitAsync(job.Cancellation.Token);acquired=true;job.Status=T("正在处理","Running");var last=Stopwatch.StartNew();var progress=new Progress<EngineProgress>(p=>{if(!job.Active)return;if(p.CurrentItem is {Length:>0})job.CurrentItem=p.CurrentItem;if(last.ElapsedMilliseconds<100)return;last.Restart();if(p.Total>0)job.Percent=Math.Clamp(p.Completed*100.0/p.Total,0,100);});await operation(progress,job.Cancellation.Token);if(completed!=null){try{await completed();}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}}job.Active=false;job.Percent=100;job.Status=T("已完成","Completed");Notify(T(name+" 已完成。",name+" completed."),InfoBarSeverity.Success);}catch(OperationCanceledException){job.Status=T("已取消","Cancelled");job.Active=false;}catch(Exception ex){job.Status=T("失败：","Failed: ")+ex.Message;job.Active=false;Notify(ex.Message,InfoBarSeverity.Error);}finally{if(acquired)queue.Release();StatusText.Text=jobs.Any(j=>j.CanCancel)?T("有任务正在处理或排队","Tasks are running or queued"):T("就绪","Ready");}}
+        _=Run();async Task Run(){bool acquired=false;try{await queue.WaitAsync(job.Cancellation.Token);acquired=true;job.Status=T("正在处理","Running");var last=Stopwatch.StartNew();var progress=new Progress<EngineProgress>(p=>{if(!job.Active)return;if(p.CurrentItem is {Length:>0})job.CurrentItem=p.CurrentItem;if(last.ElapsedMilliseconds<100)return;last.Restart();if(p.Total>0)job.Percent=Math.Clamp(p.Completed*100.0/p.Total,0,100);});await operation(progress,job.Cancellation.Token);if(completed!=null){try{await completed();}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}}CompleteJob(job);Notify(T(name+" 已完成。",name+" completed."),InfoBarSeverity.Success);}catch(OperationCanceledException){job.Status=T("已取消","Cancelled");job.Active=false;}catch(Exception ex){job.Status=T("失败：","Failed: ")+ex.Message;job.Active=false;Notify(ex.Message,InfoBarSeverity.Error);}finally{if(acquired)queue.Release();StatusText.Text=jobs.Any(j=>j.CanCancel)?T("有任务正在处理或排队","Tasks are running or queued"):T("就绪","Ready");}}
+    }
+    private void CompleteJob(ArchiveJob job)
+    {
+        job.Active=false;job.Percent=100;job.Status=T("已完成","Completed");
+        jobs.Remove(job);UpdateTasksEmptyState();
+    }
+    private void UpdateTasksEmptyState()
+    {
+        if(tasksEmptyCard!=null)tasksEmptyCard.Visibility=jobs.Count==0&&sharedTaskViews.Count==0?Visibility.Visible:Visibility.Collapsed;
     }
     private void ShowTasks()
     {
         var content=Stack(18);content.Children.Add(Text(T("任务中心","Tasks"),28,true));content.Children.Add(Text(T("任务在后台排队运行，切换页面不会中断。","Tasks run in the background; switching pages does not interrupt them.")));
-        var emptyCard=Card(Text(T("还没有任务。新建压缩或解压后，可在这里查看进度。","No tasks yet. Create or extract an archive to see progress here.")));
-        if(jobs.Count==0)content.Children.Add(emptyCard);
+        var emptyCard=Card(Text(T("当前没有任务。新建压缩或解压后，可在这里查看进度；成功完成的任务会自动移除。","No current tasks. Create or extract an archive to see progress here; successful tasks are removed automatically.")));
+        emptyCard.Visibility=jobs.Count==0?Visibility.Visible:Visibility.Collapsed;content.Children.Add(emptyCard);
         var views=new List<(ArchiveJob Job,Action<ArchiveJob> Handler)>();
         foreach(var job in jobs)
         {
@@ -548,8 +607,18 @@ public sealed partial class MainWindow:Window
             var statusLine=new Grid();var status=Text(job.Status);statusLine.Children.Add(status);var percent=Text(job.PercentText,12);percent.HorizontalAlignment=HorizontalAlignment.Right;percent.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];statusLine.Children.Add(percent);card.Children.Add(statusLine);
             var bar=new ProgressBar{Minimum=0,Maximum=100,Value=job.Percent};card.Children.Add(bar);
             var actions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=8};var cancel=Button(T("取消任务","Cancel task"),async(_,_)=>{var d=Dialog(T("取消任务？","Cancel this task?"),Text(T("已完成的文件将保留，当前未完成的临时文件会清理。","Completed files are kept; unfinished temporary files are cleaned up.")),T("取消任务","Cancel task"));d.DefaultButton=ContentDialogButton.Close;if(await ShowDialogAsync(d)==ContentDialogResult.Primary)job.Cancellation.Cancel();});cancel.IsEnabled=job.CanCancel;actions.Children.Add(cancel);
-            actions.Children.Add(Button(T("打开文件夹","Open folder"),(_,_)=>{var path=Directory.Exists(job.Destination)?job.Destination:System.IO.Path.GetDirectoryName(job.Destination);if(path!=null&&Directory.Exists(path)){var info=new ProcessStartInfo("explorer.exe"){UseShellExecute=false};info.ArgumentList.Add(path);Process.Start(info);}}));card.Children.Add(actions);content.Children.Add(Card(card));
-            void Refresh(){status.Text=job.Status;percent.Text=job.PercentText;bar.Value=job.Percent;cancel.IsEnabled=job.CanCancel;current.Text=job.CurrentItem;current.Visibility=string.IsNullOrEmpty(job.CurrentItem)?Visibility.Collapsed:Visibility.Visible;}
+            actions.Children.Add(Button(T("打开文件夹","Open folder"),(_,_)=>{var path=Directory.Exists(job.Destination)?job.Destination:System.IO.Path.GetDirectoryName(job.Destination);if(path!=null&&Directory.Exists(path)){var info=new ProcessStartInfo("explorer.exe"){UseShellExecute=false};info.ArgumentList.Add(path);Process.Start(info);}}));card.Children.Add(actions);var border=Card(card);content.Children.Add(border);
+            void Refresh()
+            {
+                if(!jobs.Contains(job))
+                {
+                    content.Children.Remove(border);
+                    foreach(var view in taskSubscriptions.Where(view=>ReferenceEquals(view.Job,job)).ToArray()){view.Job.Updated-=view.Handler;taskSubscriptions.Remove(view);}
+                    UpdateTasksEmptyState();return;
+                }
+                status.Text=job.Status;percent.Text=job.PercentText;bar.Value=job.Percent;cancel.IsEnabled=job.CanCancel;
+                current.Text=job.CurrentItem;current.Visibility=string.IsNullOrEmpty(job.CurrentItem)?Visibility.Collapsed:Visibility.Visible;
+            }
             Action<ArchiveJob> handler=_=>DispatcherQueue.TryEnqueue(Refresh);views.Add((job,handler));
         }
         var sharedHost=Stack(12);content.Children.Add(sharedHost);
@@ -567,7 +636,6 @@ public sealed partial class MainWindow:Window
         IReadOnlyList<SharedTask> tasks;
         try{tasks=await Task.Run(SharedTaskStore.ReadAll);}finally{refreshingSharedTasks=false;}
         if(!ReferenceEquals(host,sharedTaskHost))return;
-        if(tasksEmptyCard!=null)tasksEmptyCard.Visibility=jobs.Count==0&&tasks.Count==0?Visibility.Visible:Visibility.Collapsed;
         var ids=tasks.Select(t=>t.Id).ToHashSet();
         foreach(var id in sharedTaskViews.Keys.Where(id=>!ids.Contains(id)).ToArray()){host.Children.Remove(sharedTaskViews[id].Card);sharedTaskViews.Remove(id);}
         foreach(var shared in tasks)
@@ -581,6 +649,7 @@ public sealed partial class MainWindow:Window
             void Update(SharedTask value){title.Text=value.Title;destination.Text=value.Destination;current.Text=value.CurrentItem;status.Text=value.Status;percent.Text=$"{value.Percent:0}%";bar.Value=Math.Clamp(value.Percent,0,100);bar.IsIndeterminate=value.Percent<=0&&value.Status.Contains(T("正在","Running"),StringComparison.Ordinal);}
             sharedTaskViews[shared.Id]=(border,Update);host.Children.Add(border);Update(shared);
         }
+        UpdateTasksEmptyState();
     }
     private static string NormalizeTheme(string theme)=>theme switch{"浅色" or "light"=>"light","深色" or "dark"=>"dark","系统" or "system"=>"system",_=>"system"};
     private void ApplyTheme(){Root.RequestedTheme=NormalizeTheme(settings.Theme) switch{"light"=>ElementTheme.Light,"dark"=>ElementTheme.Dark,_=>ElementTheme.Default};}

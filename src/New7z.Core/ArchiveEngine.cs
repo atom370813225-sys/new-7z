@@ -19,8 +19,11 @@ public sealed class ArchiveEngine
         => (await RunAsync(new(){Action="read",Path=path,Entries=[entry],Password=password,ReadLimit=limit},null,cancellation).ConfigureAwait(false)).Bytes??[];
     public async Task TestAsync(string path,string? password=null,IProgress<EngineProgress>? progress=null,CancellationToken cancellation=default)
         => await RunAsync(new(){Action="test",Path=path,Password=password},progress,cancellation).ConfigureAwait(false);
-    public async Task CreateAsync(string output,IReadOnlyList<string> sources,string format="7z",int level=5,string? password=null,bool encryptNames=false,string? method=null,IProgress<EngineProgress>? progress=null,CancellationToken cancellation=default)
-        => await RunAsync(new(){Action="create",Path=output,Sources=sources.ToArray(),Format=format,Level=level,Password=password,EncryptNames=encryptNames,Method=method},progress,cancellation).ConfigureAwait(false);
+    public async Task CreateAsync(string output,IReadOnlyList<string> sources,string format="7z",int level=5,string? password=null,bool encryptNames=false,string? method=null,IProgress<EngineProgress>? progress=null,CancellationToken cancellation=default,long volumeSize=0)
+    {
+        ArchiveVolumes.Validate(output,format,volumeSize);
+        await RunAsync(new(){Action="create",Path=output,Sources=sources.ToArray(),Format=format,Level=level,Password=password,EncryptNames=encryptNames,Method=method,VolumeSize=volumeSize},progress,cancellation).ConfigureAwait(false);
+    }
     public async Task ModifyAsync(string archive,IReadOnlyList<uint> removeIndices,IReadOnlyList<SourceItem> additions,string? password=null,IProgress<EngineProgress>? progress=null,CancellationToken cancellation=default)
         => await RunAsync(new(){Action="modify",Path=archive,Indices=removeIndices.ToArray(),Additions=additions.ToArray(),Password=password},progress,cancellation).ConfigureAwait(false);
     public async Task<ExtractionResult> ExtractAsync(string archive,IReadOnlyList<ArchiveEntry> entries,string destination,ConflictPolicy policy=ConflictPolicy.Rename,string? password=null,IProgress<EngineProgress>? progress=null,CancellationToken cancellation=default,ExtractionLimits? limits=null)
@@ -33,6 +36,7 @@ public sealed class ArchiveEngine
     internal static async Task<EngineMessage> RunAsync(EngineRequest request,IProgress<EngineProgress>? progress,CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
+        if((request.Action is "list" or "read" or "test" or "extract")&&request.Path.EndsWith(".001",StringComparison.OrdinalIgnoreCase))await Task.Run(()=>ArchiveVolumes.ValidateInput(request.Path),cancellation).ConfigureAwait(false);
         var host=Path.Combine(AppContext.BaseDirectory,"New7z.EngineHost.exe");
         if(!File.Exists(host))throw new FileNotFoundException(Loc.T("解压引擎进程缺失，请修复安装。","The archive worker is missing. Repair the installation."),host);
         using var process=new Process{StartInfo=new(host){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardInputEncoding=new UTF8Encoding(false),StandardOutputEncoding=new UTF8Encoding(false)}};
@@ -90,7 +94,11 @@ public sealed class ArchiveEngine
     private static void Cleanup(EngineRequest request)
     {
         var paths=new List<string>();
-        if(request.Action is "create" or "modify")paths.Add(Path.GetFullPath(request.Path)+"."+request.Id+".partial");
+        if(request.Action is "create" or "modify")
+        {
+            var temp=Path.GetFullPath(request.Path)+"."+request.Id+".partial";paths.Add(temp);
+            if(request.VolumeSize>0)try{paths.AddRange(ArchiveVolumes.Parts(temp));}catch{}
+        }
         if(request.Action=="extract")foreach(var entry in request.Entries.Where(e=>!e.IsDirectory))
         {
             try{var target=ResolveOutput(Path.GetFullPath(request.Destination),entry.Path);paths.Add(Path.Combine(Path.GetDirectoryName(target)!,".new7z-"+request.Id+"-"+entry.Index+".partial"));}catch(IOException){}

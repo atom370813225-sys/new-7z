@@ -28,6 +28,8 @@ public sealed partial class ShellTaskWindow:Window
     private ComboBox? format,method,level,conflict;
     private PasswordBox? secret;
     private CheckBox? encryptNames;
+    private VolumeSizeField? volumes;
+    private long volumeSize;
     private ContentDialog? activeDialog;
 
     internal ShellTaskWindow(ShellRequest? shellRequest,string? error=null)
@@ -135,10 +137,11 @@ public sealed partial class ShellTaskWindow:Window
             encryptNames=new CheckBox{Content=T("加密文件名（仅 7z）","Encrypt file names (7z only)"),IsEnabled=false};
             void UpdateMethods(){var code=format.SelectedItem?.ToString()??"7z";var choices=CompressionOptions.For(code);method.ItemsSource=choices;var preferred=CompressionOptions.Default(UserSettings.Load(),code);method.SelectedIndex=Math.Max(0,choices.ToList().FindIndex(item=>item.Value==preferred));method.IsEnabled=choices.Count>0;}
             var streamHint=new TextBlock{Text=T("Zstandard / LZ4 每次压缩一个文件；多个文件请先打包为 TAR。","Zstandard / LZ4 compress one file; pack multiple files into TAR first."),TextWrapping=TextWrapping.Wrap};
-            void UpdateEncryption(){var noPassword=format.SelectedIndex>=2;if(noPassword)secret.Password="";secret.IsEnabled=!noPassword;level.IsEnabled=format.SelectedIndex!=2;method.IsEnabled=format.SelectedIndex<2;streamHint.Visibility=format.SelectedIndex>=3?Visibility.Visible:Visibility.Collapsed;encryptNames.IsEnabled=format.SelectedIndex==0&&secret.Password.Length>0;if(!encryptNames.IsEnabled)encryptNames.IsChecked=false;}
+            volumes=new VolumeSizeField();
+            void UpdateEncryption(){volumes.SetFormat(format.SelectedItem?.ToString()??"7z");var noPassword=format.SelectedIndex>=2;if(noPassword)secret.Password="";secret.IsEnabled=!noPassword;level.IsEnabled=format.SelectedIndex!=2;method.IsEnabled=format.SelectedIndex<2;streamHint.Visibility=format.SelectedIndex>=3?Visibility.Visible:Visibility.Collapsed;encryptNames.IsEnabled=format.SelectedIndex==0&&secret.Password.Length>0;if(!encryptNames.IsEnabled)encryptNames.IsChecked=false;}
             format.SelectionChanged+=(_,_)=>{output.Text=System.IO.Path.ChangeExtension(output.Text,format.SelectedItem.ToString());UpdateMethods();UpdateEncryption();};
             secret.PasswordChanged+=(_,_)=>UpdateEncryption();
-            Configuration.Children.Add(format);Configuration.Children.Add(method);Configuration.Children.Add(level);Configuration.Children.Add(secret);Configuration.Children.Add(encryptNames);Configuration.Children.Add(streamHint);UpdateMethods();UpdateEncryption();
+            Configuration.Children.Add(format);Configuration.Children.Add(method);Configuration.Children.Add(level);Configuration.Children.Add(volumes.View);Configuration.Children.Add(secret);Configuration.Children.Add(encryptNames);Configuration.Children.Add(streamHint);UpdateMethods();UpdateEncryption();
         }
         else
         {
@@ -164,11 +167,11 @@ public sealed partial class ShellTaskWindow:Window
         try
         {
             if(string.IsNullOrWhiteSpace(output?.Text)||!System.IO.Path.IsPathFullyQualified(output.Text))throw new IOException(T("请输入完整的目标路径，或选择文件夹。","Enter a full target path, or choose a folder."));
-            if(request!.Action=="create"&&(File.Exists(output.Text)||Directory.Exists(output.Text)))throw new IOException(T("输出名称已存在，请换一个名称。","The output name already exists. Choose another name."));
+            if(request!.Action=="create"){volumeSize=volumes?.Value??0;ArchiveVolumes.Validate(output.Text,format?.SelectedItem?.ToString()??"7z",volumeSize);}
             if(conflict?.SelectedIndex==2&&!await ConfirmAsync(T("替换同名文件？","Replace Existing Files?"),T("目标目录中的同名文件将被替换：\n","Files with the same name in the target folder will be replaced:\n")+output.Text,T("替换并解压","Replace and Extract")))return;
             PrepareTargets();await RunAsync();
         }
-        catch(Exception ex){ShowMessage(T("请检查目标位置","Check the Target Location"),ex.Message,InfoBarSeverity.Error);output?.Focus(FocusState.Programmatic);}
+        catch(Exception ex){ShowMessage(request?.Action=="create"?T("请检查压缩选项","Check Compression Options"):T("请检查目标位置","Check the Target Location"),ex.Message,InfoBarSeverity.Error);if(ex is not ArgumentException)output?.Focus(FocusState.Programmatic);}
         finally{StartButton.IsEnabled=true;}
     }
     private static string ActionFormat(string action)=>action switch{"create-zip"=>"zip","create-tar"=>"tar",_=>"7z"};
@@ -181,7 +184,7 @@ public sealed partial class ShellTaskWindow:Window
         }
         if(request!.Action.StartsWith("create"))
         {
-            destination=output?.Text??ShellPaths.CreateTarget(request,ActionFormat(request.Action));targets=[destination];return;
+            var target=output?.Text??ShellPaths.CreateTarget(request,ActionFormat(request.Action));targets=[target];destination=ArchiveVolumes.FirstPath(target,volumeSize);return;
         }
         var reserved=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         targets=request.Paths.Select(source=>
@@ -229,13 +232,14 @@ public sealed partial class ShellTaskWindow:Window
                     var methodName=(method?.SelectedItem as CompressionChoice)?.Value;
                     if(string.IsNullOrEmpty(methodName))methodName=CompressionOptions.Default(UserSettings.Load(),kind);
                     var compression=level?.SelectedIndex switch{1=>1,2=>9,_=>5};
-                    await engine.CreateAsync(targets[0],request.Paths,kind,compression,secret?.Password,encryptNames?.IsChecked==true,methodName,progress,cancellation.Token);
+                    await engine.CreateAsync(targets[0],request.Paths,kind,compression,secret?.Password,encryptNames?.IsChecked==true,methodName,progress,cancellation.Token,volumeSize);
                 }
                 else await ProcessArchiveAsync(request.Paths[i],targets[i],progress);
             }
             Progress.IsIndeterminate=false;Progress.Value=100;PercentText.Text="100%";StatusText.Text=T("已完成","Completed");
             ShowMessage(request.Action=="test"?T("完整性测试通过","Integrity Test Passed"):creating?T("压缩完成","Compression Complete"):T("解压完成","Extraction Complete"),request.Action=="test"?T("所选压缩包未发现完整性错误。","No integrity errors were found in the selected archives."):T("文件已保存到目标位置。","Files were saved to the target location."),InfoBarSeverity.Success);
             succeeded=true;
+            running=false; // Ignore progress callbacks already posted before completion.
             PersistSharedTask(T("已完成","Completed"));
         }
         catch(OperationCanceledException){Progress.IsIndeterminate=false;StatusText.Text=T("已取消","Cancelled");PersistSharedTask(StatusText.Text);ShowMessage(T("任务已取消","Task Cancelled"),T("已完成的输出保留，当前未完成的临时文件已清理。","Completed output is kept; unfinished temporary files have been cleaned up."),InfoBarSeverity.Informational);}

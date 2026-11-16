@@ -29,6 +29,8 @@
 
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 |---|---|---|---|---|
+| Native Task Retention | MainWindow.CompleteJob / SharedTaskStore | 当前用户要求 / 本文件 | 成功后自动移除、不保留历史；失败与取消保留；读取时清理旧成功快照 | New7z.TaskStore.Tests / --verify-ui Tasks |
+| Native Split Volumes | VolumeSizeField / ArchiveVolumes / ArchiveEngine | 本文件 / DESIGN.md | 主窗口与 Shell 压缩表单共享预设、自定义与校验；7z/ZIP/TAR；默认不分卷；MiB/GiB 为二进制；自定义至少 1 MiB | VolumeTests / --verify-ui Volumes / test-icons.ps1 |
 | Native Archive Properties | MainWindow.ArchiveView.CreateArchivePropertiesPanel | 本文件 / DESIGN.md | 右侧常显整包统计；独立纵向滚动；ListView 纵向与表格横向滚动 | --verify-ui：选择/目录/搜索统计不变、真实包大小、无属性按钮、900 DIP 布局 |
 | Native Preview | MainWindow.Preview.ShowPreviewAsync | 本文件 / DESIGN.md | 主窗口所属的独立图片/文本只读窗口；一次激活；加载取消与控件复用 | --verify-ui：文本/图片、重复打开、查找/换行布局稳定、读取中关闭 |
 | Table Selection | app.js archiveTable / selection Set | 本文件 | 当前可见目录 | browser-check.cjs |
@@ -52,6 +54,8 @@
 Date 不适用：只读示例日期，无日期输入控件。引擎 API、登录、远程请求、真实磁盘修改本轮不适用。
 
 ## Component behavior
+
+2026-11-16 任务保留策略（当前用户要求）：原生任务中心在任务成功完成后自动移除卡片，不保留成功历史；主窗口队列与拖动解压共用 `MainWindow.CompleteJob`，Explorer 快捷任务由 `SharedTaskStore` 按写入顺序删除成功快照，并在读取时清理旧版中英文成功记录。100% 进度本身不代表完成，失败与取消记录仍可查看。任务全部移除后显示空状态；成功提示和 Shell 小窗口结果页沿用现有行为。
 
 原生图片/文本预览统一由 `MainWindow.Preview.cs` 打开独立的主窗口所属窗口；每次打开只激活一次，不以延时循环抢焦点。双击由 ListView 完成手势和选择后排队处理；重复打开请求共用当前会话。首次显示前确定控件显隐与加载状态；查找/换行保留同一文本控件，匹配提示不挤压内容区。关闭立即使异步读取失效并请求取消。原生 `--verify-ui` 分别检查文本、图片、重复请求、查找/换行实例和高度稳定性、关闭释放；不等同于当前桌面逐帧视觉验收。
 

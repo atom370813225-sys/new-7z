@@ -38,7 +38,7 @@ internal static class NativeMethods
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzTest(string path, string? password, ProgressCallback progress, IntPtr context);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzCreate(string path, int format, int level, string? method, string? password, int encryptNames,
         [MarshalAs(UnmanagedType.LPArray, ArraySubType=UnmanagedType.LPWStr,SizeParamIndex=7)] string[] paths,
-        [MarshalAs(UnmanagedType.LPArray, ArraySubType=UnmanagedType.LPWStr,SizeParamIndex=7)] string[] names, uint count, ProgressCallback progress, IntPtr context);
+        [MarshalAs(UnmanagedType.LPArray, ArraySubType=UnmanagedType.LPWStr,SizeParamIndex=7)] string[] names, uint count, ProgressCallback progress, IntPtr context,ulong volumeSize);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzUpdate(string path, string output, string? password, int zip,
         [MarshalAs(UnmanagedType.LPArray, ArraySubType=UnmanagedType.U4,SizeParamIndex=5)] uint[] removeIndices, uint removeCount,
         [MarshalAs(UnmanagedType.LPArray, ArraySubType=UnmanagedType.LPWStr,SizeParamIndex=8)] string[] addPaths,

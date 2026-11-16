@@ -14,12 +14,15 @@ internal static class SharedTaskStore
         lock(WriteLock)pendingWrite=pendingWrite.ContinueWith(_=>Write(task),CancellationToken.None,TaskContinuationOptions.None,TaskScheduler.Default);
     }
     public static Task FlushAsync(){lock(WriteLock)return pendingWrite;}
+    private static bool IsCompleted(SharedTask task)=>task.Status is "已完成" or "Completed";
     private static void Write(SharedTask task)
     {
         try
         {
-            Directory.CreateDirectory(Folder);
             var path=Path.Combine(Folder,task.Id+".json");var temp=path+".tmp";
+            // Completion is queued after progress writes so an older snapshot cannot survive it.
+            if(IsCompleted(task)){File.Delete(path);File.Delete(temp);return;}
+            Directory.CreateDirectory(Folder);
             File.WriteAllText(temp,JsonSerializer.Serialize(task,AppJsonContext.Default.SharedTask));File.Move(temp,path,true);
         }
         catch{}
@@ -36,7 +39,7 @@ internal static class SharedTaskStore
                 {
                     var task=JsonSerializer.Deserialize(File.ReadAllText(path),AppJsonContext.Default.SharedTask);
                     if(task==null)continue;
-                    if(task.UpdatedUtc<cutoff){File.Delete(path);continue;}
+                    if(IsCompleted(task)||task.UpdatedUtc<cutoff){File.Delete(path);continue;}
                     result.Add(task);
                 }
                 catch{}

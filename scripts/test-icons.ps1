@@ -1,3 +1,4 @@
+param([string]$IdentityDirectory)
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot -Parent
 Add-Type -TypeDefinition @'
@@ -23,4 +24,23 @@ try{
   if($size -eq 0){256}else{[int]$size}
  })
 }finally{$reader.Dispose()}
-[pscustomobject]@{Result='PASS';Resources=$checks;IconSizes=$sizes} | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$projectRoot/docs/icon-integration.json"
+Add-Type -AssemblyName System.Drawing
+$unplated=0
+foreach($size in @(16,20,24,30,32,36,40,44,48,60,64,72,80,96,256)){
+ foreach($variant in @('unplated','lightunplated')){
+  $file=Join-Path $projectRoot "src/New7z.App/Assets/Store/Square44x44Logo.targetsize-$($size)_altform-$variant.png"
+  $bitmap=[Drawing.Bitmap]::FromFile($file)
+  try{if($bitmap.Width -ne $size -or $bitmap.Height -ne $size -or $bitmap.GetPixel(0,0).A -ne 0){throw "Invalid unplated taskbar image: $file"}}finally{$bitmap.Dispose()}
+  $unplated++
+ }
+}
+if($IdentityDirectory){
+ $IdentityDirectory=[IO.Path]::GetFullPath($IdentityDirectory)
+ $sdk=Get-ChildItem 'C:/Program Files (x86)/Windows Kits/10/bin' -Directory | Where-Object {$_.Name -match '^10\.' -and (Test-Path -LiteralPath "$($_.FullName)/x64/makepri.exe")} | Sort-Object {[version]$_.Name} -Descending | Select-Object -First 1
+ $dump=Join-Path $projectRoot 'artifacts/identity-icon-pri.xml'
+ & "$($sdk.FullName)/x64/makepri.exe" dump /if (Join-Path $IdentityDirectory 'resources.pri') /of $dump /dt detailed /o | Out-Null
+ if($LASTEXITCODE){throw 'Cannot inspect identity resource index.'}
+ $resourceText=Get-Content -LiteralPath $dump -Raw
+ foreach($qualifier in @('UNPLATED','LIGHTUNPLATED')){if($resourceText.IndexOf(('name="AlternateForm" value="'+$qualifier+'"'),[StringComparison]::OrdinalIgnoreCase) -lt 0){throw "Identity PRI lacks the $qualifier qualifier."}}
+}
+[pscustomobject]@{Result='PASS';Resources=$checks;IconSizes=$sizes;UnplatedAssets=$unplated;IdentityPri=$IdentityDirectory} | ConvertTo-Json -Depth 4 | Tee-Object -FilePath "$projectRoot/docs/icon-integration.json"

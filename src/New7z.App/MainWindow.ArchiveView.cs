@@ -95,7 +95,7 @@ public sealed partial class MainWindow
         // The whole archive size includes headers and works for solid archives,
         // whose individual entries may not have a packed-size value.
         string packedSize;
-        try{packedSize=ByteSize.Format((ulong)new FileInfo(archive!).Length);}
+        try{packedSize=ByteSize.Format((ulong)ArchiveVolumes.Length(archive!));}
         catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){packedSize=T("无法读取","Unavailable");}
         archivePackedSizeText=Label("PackedSize",packedSize);
         AutomationProperties.SetLabeledBy(archiveFileCountText,countLabel);

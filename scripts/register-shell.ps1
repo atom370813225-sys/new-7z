@@ -10,5 +10,6 @@ $package=Join-Path $projectRoot 'artifacts/shell-package'
 New-Item -ItemType Directory -Path "$package/Assets" -Force | Out-Null
 Copy-Item -LiteralPath "$projectRoot/shell/AppxManifest.xml" -Destination "$package/AppxManifest.xml" -Force
 Copy-Item -LiteralPath "$projectRoot/图标/logo.png" -Destination "$package/Assets/logo.png" -Force
+& "$PSScriptRoot/build-identity-resources.ps1" -PackageDirectory $package
 Add-AppxPackage -Register "$package/AppxManifest.xml" -ExternalLocation $app
 Get-AppxPackage -Name 'New7z.ContextMenu' | Select-Object Name,PackageFullName,Status

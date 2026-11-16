@@ -36,6 +36,7 @@ internal static class ShellPaths
     public static string ArchiveStem(string path)
     {
         var name=System.IO.Path.GetFileName(path);
+        if(name.EndsWith(".001",StringComparison.OrdinalIgnoreCase))name=name[..^4];
         foreach(var ext in new[]{".tar.gz",".tar.xz",".tar.bz2"})
             if(name.EndsWith(ext,StringComparison.OrdinalIgnoreCase))return name[..^ext.Length];
         return System.IO.Path.GetFileNameWithoutExtension(name);

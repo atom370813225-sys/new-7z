@@ -16,6 +16,7 @@ internal sealed record EngineRequest
     public ExtractionLimits Limits {get;init;}=ExtractionLimits.Default;
     public ulong ReadLimit {get;init;}
     public string[] Sources {get;init;}=[];
+    public long VolumeSize {get;init;}
     public SourceItem[] Additions {get;init;}=[];
     public uint[] Indices {get;init;}=[];
     public string Format {get;init;}="7z";
@@ -66,7 +67,7 @@ public static class EngineWorker
                 case "list":result=result with{Entries=(await engine.ListAsync(request.Path,request.Password,token).ConfigureAwait(false)).ToArray()};break;
                 case "read":result=result with{Bytes=await engine.ReadAsync(request.Path,request.Entries.Single(),request.Password,request.ReadLimit,token).ConfigureAwait(false)};break;
                 case "test":await engine.TestAsync(request.Path,request.Password,progress,token).ConfigureAwait(false);break;
-                case "create":await engine.CreateAsync(request.Path,request.Sources,request.Format,request.Level,request.Password,request.EncryptNames,request.Method,progress,token).ConfigureAwait(false);break;
+                case "create":await engine.CreateAsync(request.Path,request.Sources,request.Format,request.Level,request.Password,request.EncryptNames,request.Method,progress,token,request.VolumeSize).ConfigureAwait(false);break;
                 case "modify":await engine.ModifyAsync(request.Path,request.Indices,request.Additions,request.Password,progress,token).ConfigureAwait(false);break;
                 case "extract":result=result with{Extraction=await engine.ExtractAsync(request.Path,request.Entries,request.Destination,request.Policy,request.Password,progress,token,request.Limits).ConfigureAwait(false)};break;
                 default:throw new ArgumentException("Unknown worker action.");
