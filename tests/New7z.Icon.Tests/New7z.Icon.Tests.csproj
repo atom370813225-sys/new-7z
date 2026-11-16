@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net10.0-windows10.0.26100.0</TargetFramework><TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/New7z.App/CustomFormatIcon.cs" Link="CustomFormatIcon.cs" />
+    <Compile Include="../../src/New7z.App/ExplorerIcons.cs" Link="ExplorerIcons.cs" />
+  </ItemGroup>
+</Project>

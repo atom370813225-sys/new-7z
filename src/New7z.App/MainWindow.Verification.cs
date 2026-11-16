@@ -79,6 +79,7 @@ public sealed partial class MainWindow
             if(!settingsLabels.Contains(T("默认压缩格式","Default archive format"))||!settingsLabels.Contains(T("默认压缩方法","Default compression method")))throw new IOException("Compression defaults did not render.");
             report["Settings"]="rendered settings hub and the compression defaults category";
             var previousTheme=settings.FormatIconTheme;
+            var previousIcons=settings.FormatIcons;settings.FormatIcons=[];
             try
             {
                 settings.FormatIconTheme="animals";settingsCategory="appearance";RenderPage();Root.UpdateLayout();
@@ -95,9 +96,20 @@ public sealed partial class MainWindow
                 var probe=new UserSettings{FormatIconTheme="animals"};
                 var serialized=JsonSerializer.Serialize(probe,AppJsonContext.Default.UserSettings);
                 if(JsonSerializer.Deserialize(serialized,AppJsonContext.Default.UserSettings)?.FormatIconTheme!="animals")throw new IOException("Icon theme did not round-trip through the settings JSON context.");
-                report["FormatIconTheme"]="animal format icon theme resolves and renders eight previews; settings JSON round-trips the theme; per-format overrides still take priority";
+                var customIcon=System.IO.Path.Combine(AppContext.BaseDirectory,"Assets","Formats","zip.png");
+                var explorerIcon=await CustomFormatIcon.CreateAsync(customIcon);
+                using(var iconReader=new BinaryReader(File.OpenRead(explorerIcon)))
+                    if(iconReader.ReadUInt16()!=0||iconReader.ReadUInt16()!=1||iconReader.ReadUInt16()!=7)throw new IOException("Published PNG-to-ICO conversion failed.");
+                report["CustomExplorerIcon"]="published PNG decoder/encoder generated a seven-size ICO without changing system associations";
+                settings.FormatIcons["zip"]=customIcon;
+                if(FormatIconPath("zip")!=customIcon)throw new IOException("Custom icon did not override the theme.");
+                settings.FormatIconTheme="default";
+                if(FormatIconPath("zip")!=customIcon)throw new IOException("Theme switch replaced a custom icon.");
+                settings.FormatIcons.Remove("zip");settings.FormatIconTheme="animals";
+                if(!FormatIconPath("zip").Replace('\\','/').EndsWith("Assets/Formats/Animals/zip.png",StringComparison.OrdinalIgnoreCase))throw new IOException("Reset did not restore the current theme.");
+                report["FormatIconTheme"]="animal theme resolves and renders eight previews; settings JSON round-trip; custom PNG overrides both themes; reset restores the current theme";
             }
-            finally{settings.FormatIconTheme=previousTheme;settingsCategory="compression";RenderPage();}
+            finally{settings.FormatIconTheme=previousTheme;settings.FormatIcons=previousIcons;settingsCategory="compression";RenderPage();}
             var taskJob=new ArchiveJob("verification job","verification target"){Status="verification"};
             var failedJob=new ArchiveJob("verification failed job","verification target"){Status="Failed: verification",Active=false,Percent=100};
             jobs.Add(taskJob);jobs.Add(failedJob);

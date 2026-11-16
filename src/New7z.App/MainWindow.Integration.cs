@@ -19,6 +19,8 @@ public sealed partial class MainWindow
         using var process=Process.Start(info)??throw new IOException(T("无法启动系统集成组件。","Cannot start the system integration component."));
         await process.WaitForExitAsync();
         if(process.ExitCode!=0)throw new IOException(T("注册未完成。请查看安装目录中的 integration-error.txt。","Registration did not complete. See integration-error.txt in the install folder."));
+        // Registration restores bundled icons; reapply the user's theme/overrides immediately.
+        await SyncExplorerIconsAsync();
     }
     private void ShowPendingIntegrationError()
     {

@@ -82,7 +82,11 @@ public sealed partial class MainWindow:Window
             _=Task.Run(CleanupDragCache);
             _=Task.Run(()=>{try{SaveExplorerLanguage();}catch{}});
             ShowPendingIntegrationError();
-            _=Task.Run(()=>{try{ExplorerIcons.Apply(settings.FormatIconTheme);}catch{}});
+            if(!AppEnvironment.IsPackaged)
+            {
+                var iconTheme=settings.FormatIconTheme;var customIcons=new Dictionary<string,string>(settings.FormatIcons);
+                _=Task.Run(async()=>{try{await ExplorerIcons.ApplyAsync(iconTheme,customIcons);}catch{}});
+            }
             var arg=startupArchive??launchArgs.FirstOrDefault(File.Exists);if(arg!=null)await OpenArchiveAsync(arg);
             if(settings.AutoCheckUpdates&&!AppEnvironment.IsPackaged)_=CheckForUpdatesAsync(false);
         };
@@ -686,6 +690,16 @@ public sealed partial class MainWindow:Window
     {
         try{var file=FormatIconPath(ext);preview.Source=File.Exists(file)?new BitmapImage(new Uri(file)):null;}catch{preview.Source=null;}
     }
+    private async Task SyncExplorerIconsAsync()
+    {
+        if(AppEnvironment.IsPackaged)return;
+        try
+        {
+            if(!await ExplorerIcons.ApplyAsync(settings.FormatIconTheme,settings.FormatIcons))
+                Notify(T("应用内图标已保存，但资源管理器图标未同步。请在设置 → 文件关联中点击「注册 / 修复文件关联」后重试。","App icons were saved, but Explorer icons were not synced. Register / repair associations in Settings → File associations, then try again."),InfoBarSeverity.Warning);
+        }
+        catch(Exception ex){Notify(T("应用内图标已保存，但资源管理器图标未同步：","App icons were saved, but Explorer icons were not synced: ")+ex.Message,InfoBarSeverity.Warning);}
+    }
     private void AddIconSettings(StackPanel panel)
     {
         var icon=Stack(12);
@@ -697,15 +711,20 @@ public sealed partial class MainWindow:Window
         icon.Children.Add(Button(T("恢复默认","Restore default"),(_,_)=>{var previous=settings.IconPath;settings.IconPath=null;settings.Save();ApplyIcon();preview.Source=BrandImage.Source;DeleteCustomIcon(previous);}));
         panel.Children.Add(Card(icon));
 
-        var formats=Stack(12);
+        var formats=Stack(12);var formatSettings=new UserControl{Content=formats};
         formats.Children.Add(Text(T("压缩文件图标","Archive icons"),18,true));
-        formats.Children.Add(Text(T("替换「最近使用」等位置显示的格式图标；图标主题会同步到 New7z 的文件关联图标。资源管理器只有在对应格式的默认程序为 New7z 时才显示这些图标。","Replace the format icons shown inside the app; the icon theme is also applied to New7z file associations. Explorer shows them only when New7z is the default app for that format."),12));
+        formats.Children.Add(Text(AppEnvironment.IsPackaged
+            ? T("替换「最近使用」等位置显示的格式图标。Microsoft Store 版本的资源管理器图标由安装包提供，不能在此修改。","Replace the format icons shown inside the app. Explorer icons in the Microsoft Store build are provided by the package and cannot be changed here.")
+            : T("图标主题和单个格式的自定义 PNG 会同步到 New7z 的文件关联图标。资源管理器只有在对应格式的默认程序为 New7z 时才显示这些图标。","The icon theme and per-format custom PNGs are also applied to New7z file associations. Explorer shows them only when New7z is the default app for that format."),12));
         var theme=new ComboBox{Header=T("图标主题","Icon theme"),ItemsSource=new[]{T("默认图标","Default icons"),T("动物图标","Animal icons")},SelectedIndex=settings.FormatIconTheme=="animals"?1:0,MinWidth=240};
-        theme.SelectionChanged+=(_,_)=>
+        theme.SelectionChanged+=async(_,_)=>
         {
             var next=theme.SelectedIndex==1?"animals":"default";
             if(next==settings.FormatIconTheme)return;
-            settings.FormatIconTheme=next;settings.Save();ExplorerIcons.Apply(next);RenderPage();
+            formatSettings.IsEnabled=false;var previous=settings.FormatIconTheme;
+            try{settings.FormatIconTheme=next;settings.Save();await SyncExplorerIconsAsync();RenderPage();}
+            catch(Exception ex){settings.FormatIconTheme=previous;theme.SelectedIndex=previous=="animals"?1:0;Notify(ex.Message,InfoBarSeverity.Error);}
+            finally{formatSettings.IsEnabled=true;}
         };
         formats.Children.Add(theme);
         var themePreview=new StackPanel{Orientation=Orientation.Horizontal,Spacing=6};
@@ -715,10 +734,10 @@ public sealed partial class MainWindow:Window
             if(File.Exists(file))themePreview.Children.Add(new Image{Width=32,Height=32,Source=new BitmapImage(new Uri(file))});
         }
         formats.Children.Add(themePreview);
-        formats.Children.Add(Text(T("单个格式的自定义图标优先于主题，且只影响应用内；「恢复默认」会回到当前主题的图标。","A per-format custom icon takes priority over the theme and affects the app only; Restore default uses the theme icon."),12));
+        formats.Children.Add(Text(T("单个格式的自定义图标优先于主题；「恢复默认」会回到当前主题的图标。","A per-format custom icon takes priority over the theme; Restore default uses the theme icon."),12));
         formats.Children.Add(Button(T("选择默认应用","Choose default apps"),(_,_)=>
         {
-            try{Process.Start(new ProcessStartInfo("ms-settings:defaultapps?registeredAppUser="+Uri.EscapeDataString("New7z")){UseShellExecute=true});}
+            try{Process.Start(new ProcessStartInfo(AppEnvironment.IsPackaged?"ms-settings:defaultapps":"ms-settings:defaultapps?registeredAppUser="+Uri.EscapeDataString("New7z")){UseShellExecute=true});}
             catch(Exception ex){Notify(T("无法打开 Windows 设置：","Cannot open Windows Settings: ")+ex.Message,InfoBarSeverity.Error);}
         }));
         foreach(var ext in FormatNames)
@@ -733,14 +752,44 @@ public sealed partial class MainWindow:Window
             row.Children.Add(formatPreview);
             var label=Text(ext.ToUpperInvariant(),14,true);label.VerticalAlignment=VerticalAlignment.Center;Grid.SetColumn(label,1);row.Children.Add(label);
             Button? reset=null;
-            var replace=Button(T("替换","Replace"),async(_,_)=>{try{var target=await PickPngAsync("custom-"+ext);if(target.Length==0)return;settings.FormatIcons.TryGetValue(ext,out var previous);settings.FormatIcons[ext]=target;settings.Save();SetFormatPreview(formatPreview,ext);DeleteCustomIcon(previous);if(reset!=null)reset.IsEnabled=true;}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}});
+            var replace=Button(T("替换","Replace"),async(_,_)=>
+            {
+                formatSettings.IsEnabled=false;var target="";var saved=false;
+                try
+                {
+                    target=await PickPngAsync("custom-"+ext);if(target.Length==0)return;
+                    if(!AppEnvironment.IsPackaged)await CustomFormatIcon.CreateAsync(target);
+                    settings.FormatIcons.TryGetValue(ext,out var previous);settings.FormatIcons[ext]=target;
+                    try{settings.Save();saved=true;}catch{if(previous==null)settings.FormatIcons.Remove(ext);else settings.FormatIcons[ext]=previous;throw;}
+                    SetFormatPreview(formatPreview,ext);if(reset!=null)reset.IsEnabled=true;
+                    await SyncExplorerIconsAsync();DeleteCustomIcon(previous);
+                }
+                catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}
+                finally{if(!saved&&target.Length>0)DeleteCustomIcon(target);formatSettings.IsEnabled=true;}
+            });
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(replace,T("替换 ","Replace ")+ext.ToUpperInvariant()+T(" 图标"," icon"));
             Grid.SetColumn(replace,2);row.Children.Add(replace);
-            reset=Button(T("恢复默认","Restore default"),(_,_)=>{if(settings.FormatIcons.Remove(ext,out var previous)){settings.Save();DeleteCustomIcon(previous);}SetFormatPreview(formatPreview,ext);if(reset!=null)reset.IsEnabled=false;});
+            reset=Button(T("恢复默认","Restore default"),async(_,_)=>
+            {
+                formatSettings.IsEnabled=false;
+                try
+                {
+                    if(settings.FormatIcons.Remove(ext,out var previous))
+                    {
+                        try{settings.Save();}catch{settings.FormatIcons[ext]=previous;throw;}
+                        SetFormatPreview(formatPreview,ext);if(reset!=null)reset.IsEnabled=false;
+                        await SyncExplorerIconsAsync();DeleteCustomIcon(previous);
+                    }
+                }
+                catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}
+                finally{formatSettings.IsEnabled=true;}
+            });
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(reset,T("恢复 ","Restore ")+ext.ToUpperInvariant()+T(" 默认图标"," default icon"));
             reset.IsEnabled=settings.FormatIcons.ContainsKey(ext);
             Grid.SetColumn(reset,3);row.Children.Add(reset);
             formats.Children.Add(row);
         }
-        panel.Children.Add(Card(formats));
+        panel.Children.Add(Card(formatSettings));
     }
     private void ShowSettings()
     {

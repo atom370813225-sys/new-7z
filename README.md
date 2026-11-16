@@ -2,13 +2,13 @@
 
 [![Release](https://img.shields.io/github/v/release/outsideoftime/new-7z?label=release)](https://github.com/outsideoftime/new-7z/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011%20x64-0078D4)](#)
 
-**New7z（新 7z）** 是一款面向 Windows 10 / 11 的开源免费压缩 / 解压软件，使用 WinUI 3 界面和完整的 7-Zip 引擎。支持创建 7z、ZIP、TAR，读取和解压 7z、ZIP、RAR、TAR、GZ、XZ、BZ2、ISO 等常见压缩格式；中文/英文界面、本地离线运行，不需要另行安装 7-Zip 或 .NET 运行库。当前正式版：**1.0.8**，Windows 10 / 11 x64。
+**New7z（新 7z）** 是一款面向 Windows 10 / 11 的开源免费压缩 / 解压软件，使用 WinUI 3 界面和完整的 7-Zip 引擎。支持创建 7z、ZIP、TAR，读取和解压 7z、ZIP、RAR、TAR、GZ、XZ、BZ2、ISO 等常见压缩格式；中文/英文界面、本地离线运行，不需要另行安装 7-Zip 或 .NET 运行库。当前正式版：**1.0.9**，Windows 10 / 11 x64。
 
 [下载安装包](https://github.com/outsideoftime/new-7z/releases/latest) · [操作说明](docs/操作说明.md) · [MIT 许可](LICENSE) · [第三方许可](THIRD-PARTY-NOTICES.md) · [安装与分发说明](docs/安装包发布.md)
 
 ## 使用
 
-下载安装 EXE，按向导安装到当前用户目录。安装包约 **30.08 MiB**，包含 .NET、WinUI 和自编译 7-Zip 引擎，可离线运行，无需安装完整 7-Zip。当前发行文件尚未进行发布者代码签名。详细操作见 [操作说明](docs/操作说明.md)。
+下载安装 EXE，按向导安装到当前用户目录。安装包约 **30.16 MiB**，包含 .NET、WinUI 和自编译 7-Zip 引擎，可离线运行，无需安装完整 7-Zip。当前发行文件尚未进行发布者代码签名。详细操作见 [操作说明](docs/操作说明.md)。
 
 Windows 10 x64（1809 及以上）请下载同一 Release 中的 `New7z-<版本>-win10-x64-Setup.exe`。它与 Windows 11 安装包使用相同的程序文件和版本号，只放宽了系统要求；Windows 10 上自动使用兼容右键菜单，Windows 11 安装包和现代菜单保持不变。
 
@@ -19,7 +19,7 @@ Windows 10 x64（1809 及以上）请下载同一 Release 中的 `New7z-<版本>
 - 资源管理器右键压缩/解压仅打开独立任务小窗口，不显示系统标题栏；成功后可手动或自动关闭，默认手动。
 - 设置中配置右键菜单总开关与八项命令，也可修复菜单注册。
 - 默认注册到 Windows「默认应用」及 7z、ZIP、RAR、TAR、GZ、XZ、BZ2、ISO 的「打开方式」；设置 → 文件关联 → **选择默认应用**，由用户选择默认格式。
-- 应用支持浅色、深色、跟随系统，以及应用内 PNG 图标替换：品牌图标和 7z、ZIP、RAR、TAR、GZ、BZ2、XZ、ISO 格式图标均可替换并恢复默认。
+- 应用支持浅色、深色、跟随系统，以及 PNG 图标替换。独立安装版中，7z、ZIP、RAR、TAR、GZ、BZ2、XZ、ISO 的单格式自定义图标会同步到资源管理器，优先于图标主题；恢复默认回到当前主题。对应格式需以 New7z 为默认程序。品牌图标替换仍只影响应用内。
 
 勾选菜单任务后，资源管理器右键会出现 **New7z** 子菜单：Windows 11 在系统具备受信任身份包或现有开发注册条件时使用现代菜单，否则退回兼容菜单；Windows 10 始终使用兼容菜单。两种模式只注册一种，不会重复显示。不会自动开启开发者模式、导入证书、隐藏 Windows 自带压缩菜单或强制覆盖默认应用。
 
@@ -37,7 +37,7 @@ Windows 10 x64（1809 及以上）请下载同一 Release 中的 `New7z-<版本>
 |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | ![7z](src/New7z.App/Assets/Formats/7z.png) | ![ZIP](src/New7z.App/Assets/Formats/zip.png) | ![RAR](src/New7z.App/Assets/Formats/rar.png) | ![TAR](src/New7z.App/Assets/Formats/tar.png) | ![GZ](src/New7z.App/Assets/Formats/gz.png) | ![BZ2](src/New7z.App/Assets/Formats/bz2.png) | ![XZ](src/New7z.App/Assets/Formats/xz.png) | ![ISO](src/New7z.App/Assets/Formats/iso.png) |
 
-设置 → 外观与图标 → 压缩文件图标 → **图标主题** 还可以切换到内置的「动物图标」。主题会同时更新 New7z 的文件关联图标；资源管理器只有在对应格式的默认程序是 New7z 时才显示这些图标，可在设置 → 文件关联 → 选择默认应用中调整。单个格式的自定义 PNG 仍然只影响应用内。
+设置 → 外观与图标 → 压缩文件图标 → **图标主题** 还可以切换到内置的「动物图标」。独立安装版的主题和单个格式自定义 PNG 都会同步到 New7z 的文件关联图标，自定义优先于主题；资源管理器只有在对应格式的默认程序是 New7z 时才显示，可在设置 → 文件关联 → 选择默认应用中调整。
 
 | 7z | ZIP | RAR | TAR | GZ | BZ2 | XZ | ISO |
 |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|

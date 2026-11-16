@@ -9,15 +9,20 @@ namespace New7z.App;
 internal static class ExplorerIcons
 {
     private static readonly string[] Formats=["7z","zip","rar","tar","gz","bz2","xz","iso"];
+    private static readonly SemaphoreSlim Gate=new(1,1);
 
-    internal static bool Apply(string theme)
+    internal static Task<bool> ApplyAsync(string theme,IReadOnlyDictionary<string,string> customIcons)=>
+        ApplyAsync(theme,new Dictionary<string,string>(customIcons,StringComparer.OrdinalIgnoreCase),Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory),Registry.CurrentUser);
+
+    // Registry/runtime boundaries are explicit so integration tests can use isolated keys.
+    internal static async Task<bool> ApplyAsync(string theme,IReadOnlyDictionary<string,string> customIcons,string appDirectory,RegistryKey currentUser)
     {
+        await Gate.WaitAsync();
         try
         {
-            var appDirectory=Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
             var installRoot=InstallRoot(appDirectory);
             if(installRoot==null||!IsRegisteredRuntime(installRoot,appDirectory))return false;
-            using var classes=Registry.CurrentUser.OpenSubKey(@"Software\Classes",true);
+            using var classes=currentUser.OpenSubKey(@"Software\Classes",true);
             if(classes==null)return false;
             var executable=Path.Combine(appDirectory,"New7z.App.exe");
             var applied=false;
@@ -26,11 +31,14 @@ internal static class ExplorerIcons
                 using var prog=classes.OpenSubKey("New7z."+ext,true);
                 if(prog==null)continue;
                 if(!OwnedBy(prog,installRoot))continue;
-                var icon=theme=="animals"
+                var hasCustom=customIcons.TryGetValue(ext,out var custom)&&File.Exists(custom);
+                var icon=hasCustom
+                    ? await CustomFormatIcon.CreateAsync(custom!)
+                    : theme=="animals"
                     ? Path.Combine(appDirectory,"Assets","Formats","Animals",ext+".ico")
                     : Path.Combine(appDirectory,"Assets","Formats",ext+".ico");
                 if(!File.Exists(icon))continue;
-                using(var defaultIcon=prog.CreateSubKey("DefaultIcon"))defaultIcon.SetValue("",icon);
+                using(var defaultIcon=prog.CreateSubKey("DefaultIcon"))defaultIcon.SetValue("",hasCustom?"\""+icon+"\",0":icon);
                 // The installer can leave an older runtime path after an upgrade; repair it here too.
                 using(var command=prog.CreateSubKey(@"shell\open\command"))command.SetValue("","\""+executable+"\" \"%1\"");
                 applied=true;
@@ -45,7 +53,7 @@ internal static class ExplorerIcons
                     applied=true;
                 }
             }
-            using(var capabilities=Registry.CurrentUser.OpenSubKey(@"Software\New7z\Capabilities",true))
+            using(var capabilities=currentUser.OpenSubKey(@"Software\New7z\Capabilities",true))
             {
                 if(capabilities?.GetValue("ApplicationIcon") is string current&&current.StartsWith(installRoot,StringComparison.OrdinalIgnoreCase))
                 {
@@ -56,7 +64,7 @@ internal static class ExplorerIcons
             if(applied)ShellIntegration.NotifyAssociationsChanged();
             return applied;
         }
-        catch{return false;}
+        finally{Gate.Release();}
     }
 
     private static string? InstallRoot(string appDirectory)
