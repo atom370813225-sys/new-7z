@@ -38,6 +38,7 @@ public sealed class UserSettings
     public string Theme {get;set;}="system";
     public string Language {get;set;}="system";
     public string? IconPath {get;set;}
+    public string FormatIconTheme {get;set;}="default";
     public string DefaultFormat {get;set;}="7z";
     public string Default7zMethod {get;set;}="LZMA2";
     public string DefaultZipMethod {get;set;}="Deflate";
@@ -46,7 +47,7 @@ public sealed class UserSettings
     public List<string> Recent {get;set;}=[];
     public static string Folder=>System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"New7z");
     public static string NormalizeFormat(string? value)=>value?.ToLowerInvariant() switch{"zip"=>"zip","tar"=>"tar","zst"=>"zst","lz4"=>"lz4",_=>"7z"};
-    public static UserSettings Load(){try{var loaded=System.Text.Json.JsonSerializer.Deserialize(File.ReadAllText(System.IO.Path.Combine(Folder,"settings.json")),AppJsonContext.Default.UserSettings)??new();loaded.FormatIcons??=[];loaded.DefaultFormat=NormalizeFormat(loaded.DefaultFormat);loaded.Default7zMethod=CompressionMethods.Normalize("7z",loaded.Default7zMethod)??CompressionMethods.Default("7z");loaded.DefaultZipMethod=CompressionMethods.Normalize("zip",loaded.DefaultZipMethod)??CompressionMethods.Default("zip");return loaded;}catch{return new();}}
+    public static UserSettings Load(){try{var loaded=System.Text.Json.JsonSerializer.Deserialize(File.ReadAllText(System.IO.Path.Combine(Folder,"settings.json")),AppJsonContext.Default.UserSettings)??new();loaded.FormatIcons??=[];loaded.FormatIconTheme=loaded.FormatIconTheme=="animals"?"animals":"default";loaded.DefaultFormat=NormalizeFormat(loaded.DefaultFormat);loaded.Default7zMethod=CompressionMethods.Normalize("7z",loaded.Default7zMethod)??CompressionMethods.Default("7z");loaded.DefaultZipMethod=CompressionMethods.Normalize("zip",loaded.DefaultZipMethod)??CompressionMethods.Default("zip");return loaded;}catch{return new();}}
     public void Save(){Directory.CreateDirectory(Folder);var target=System.IO.Path.Combine(Folder,"settings.json");var temp=target+".tmp";File.WriteAllText(temp,System.Text.Json.JsonSerializer.Serialize(this,AppJsonContext.Default.UserSettings));File.Move(temp,target,true);}
 }
 public sealed record CompressionChoice(string Value,string Display){public override string ToString()=>Display;}

@@ -14,10 +14,11 @@ if(!$Tag){$Tag="v$version"}
 if(!$Name){$Name="New7z $version"}
 $releaseDir=Join-Path $projectRoot 'artifacts/releases'
 if(!$NotesFile){$NotesFile=Join-Path $releaseDir "RELEASE-NOTES-$version.md"}
-if(!$Assets){$Assets=@(
- (Join-Path $releaseDir "New7z-$version-x64-Setup.exe"),
- (Join-Path $releaseDir 'SHA256SUMS.txt'),
- (Join-Path $releaseDir 'release-manifest.json'))}
+if(!$Assets){
+ $Assets=@((Join-Path $releaseDir "New7z-$version-x64-Setup.exe"))
+ $win10Setup=Join-Path $releaseDir "New7z-$version-win10-x64-Setup.exe"
+ if(Test-Path -LiteralPath $win10Setup){$Assets+=$win10Setup}
+ $Assets+=@((Join-Path $releaseDir 'SHA256SUMS.txt'),(Join-Path $releaseDir 'release-manifest.json'))}
 $notes=Get-Content -LiteralPath $NotesFile -Raw
 $api="https://gitee.com/api/v5/repos/$Repo"
 $release=$null

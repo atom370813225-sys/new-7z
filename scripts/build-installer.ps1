@@ -91,8 +91,14 @@ try{
  if($LASTEXITCODE){throw 'Installer compilation failed.'}
  $setup=Join-Path $release "New7z-$version-x64-Setup.exe"
  if($SigningCertificateThumbprint){& "$PSScriptRoot/sign-code.ps1" -Path $setup -CertificateThumbprint $SigningCertificateThumbprint -TimestampServer $TimestampServer -SignToolPath "$($sdk.FullName)/x64/signtool.exe"}
- $hash=(Get-FileHash -LiteralPath $setup).Hash
- Set-Content -LiteralPath "$release/SHA256SUMS.txt" -Encoding ascii -Value "$hash  $([IO.Path]::GetFileName($setup))"
- Write-Host "Installer: $setup"
- Write-Host "SHA256: $hash"
+ # Windows 10 uses the same payload and version; only the minimum OS, setup name and
+ # notes change. The Windows 11 setup above keeps its original name and requirements.
+ $win10Setup=Join-Path $release "New7z-$version-win10-x64-Setup.exe"
+ & $IsccPath /Q "/DAppVersion=$version" "/DBuildId=$buildId" "/DPayloadDir=$payload" "/DReleaseDir=$release" "/DSetupBaseName=New7z-$version-win10-x64-Setup" '/DMinWindowsVersion=10.0.17763' '/DNotesFile=InstallNotes-Win10.txt' installer/New7z.iss
+ if($LASTEXITCODE){throw 'Windows 10 installer compilation failed.'}
+ if($SigningCertificateThumbprint){& "$PSScriptRoot/sign-code.ps1" -Path $win10Setup -CertificateThumbprint $SigningCertificateThumbprint -TimestampServer $TimestampServer -SignToolPath "$($sdk.FullName)/x64/signtool.exe"}
+ $installers=@($setup,$win10Setup)
+ $sums=@(foreach($file in $installers){"$((Get-FileHash -LiteralPath $file).Hash)  $([IO.Path]::GetFileName($file))"})
+ Set-Content -LiteralPath "$release/SHA256SUMS.txt" -Encoding ascii -Value ($sums -join "`r`n")
+ foreach($file in $installers){Write-Host "Installer: $file";Write-Host "SHA256: $((Get-FileHash -LiteralPath $file).Hash)"}
 }finally{Pop-Location}

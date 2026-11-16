@@ -119,6 +119,16 @@ public sealed partial class MainWindow:Window
     {
         name=name.TrimStart('.').ToLowerInvariant();
         if(settings.FormatIcons!=null&&settings.FormatIcons.TryGetValue(name,out var custom)&&File.Exists(custom))return custom;
+        return ThemeIconPath(name);
+    }
+    private string ThemeIconPath(string name)
+    {
+        name=name.TrimStart('.').ToLowerInvariant();
+        if(settings.FormatIconTheme=="animals")
+        {
+            var themed=System.IO.Path.Combine(AppContext.BaseDirectory,"Assets","Formats","Animals",name+".png");
+            if(File.Exists(themed))return themed;
+        }
         return System.IO.Path.Combine(AppContext.BaseDirectory,"Assets","Formats",name+".png");
     }
     private Image? FormatIcon(string path)
@@ -196,11 +206,8 @@ public sealed partial class MainWindow:Window
         try
         {
             // Unavailable shares/removable media must not block the first frame.
-            var custom=settings.FormatIcons.GetValueOrDefault(System.IO.Path.GetExtension(item.Path).TrimStart('.').ToLowerInvariant());
-            var result=await Task.Run(()=>{
-                var icon=custom!=null&&File.Exists(custom)?custom:System.IO.Path.Combine(AppContext.BaseDirectory,"Assets","Formats",System.IO.Path.GetExtension(item.Path).TrimStart('.').ToLowerInvariant()+".png");
-                return (Exists:File.Exists(item.Path),Icon:File.Exists(icon)?icon:null);
-            });
+            var iconPath=FormatIconPath(System.IO.Path.GetExtension(item.Path).TrimStart('.').ToLowerInvariant());
+            var result=await Task.Run(()=> (Exists:File.Exists(item.Path),Icon:File.Exists(iconPath)?iconPath:null));
             if(version!=homeVersion||page!="home")return;
             item.Open.IsEnabled=result.Exists;
             available(result.Exists);
@@ -692,6 +699,22 @@ public sealed partial class MainWindow:Window
         var formats=Stack(12);
         formats.Children.Add(Text(T("压缩文件图标","Archive icons"),18,true));
         formats.Children.Add(Text(T("替换「最近使用」等位置显示的 7z、ZIP 等格式图标。不会修改资源管理器中的文件关联图标。","Replace the 7z, ZIP and other format icons shown inside the app, such as in Recent. Explorer file-association icons are not changed."),12));
+        var theme=new ComboBox{Header=T("图标主题","Icon theme"),ItemsSource=new[]{T("默认图标","Default icons"),T("动物图标","Animal icons")},SelectedIndex=settings.FormatIconTheme=="animals"?1:0,MinWidth=240};
+        theme.SelectionChanged+=(_,_)=>
+        {
+            var next=theme.SelectedIndex==1?"animals":"default";
+            if(next==settings.FormatIconTheme)return;
+            settings.FormatIconTheme=next;settings.Save();RenderPage();
+        };
+        formats.Children.Add(theme);
+        var themePreview=new StackPanel{Orientation=Orientation.Horizontal,Spacing=6};
+        foreach(var ext in FormatNames)
+        {
+            var file=ThemeIconPath(ext);
+            if(File.Exists(file))themePreview.Children.Add(new Image{Width=32,Height=32,Source=new BitmapImage(new Uri(file))});
+        }
+        formats.Children.Add(themePreview);
+        formats.Children.Add(Text(T("单个格式的自定义图标优先于主题；「恢复默认」会回到当前主题的图标。","A per-format custom icon takes priority over the theme; Restore default uses the theme icon."),12));
         foreach(var ext in FormatNames)
         {
             var row=new Grid{ColumnSpacing=12};

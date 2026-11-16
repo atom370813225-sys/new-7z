@@ -78,6 +78,26 @@ public sealed partial class MainWindow
             settingsLabels.Clear();CollectSettingsLabels(ContentHost);
             if(!settingsLabels.Contains(T("默认压缩格式","Default archive format"))||!settingsLabels.Contains(T("默认压缩方法","Default compression method")))throw new IOException("Compression defaults did not render.");
             report["Settings"]="rendered settings hub and the compression defaults category";
+            var previousTheme=settings.FormatIconTheme;
+            try
+            {
+                settings.FormatIconTheme="animals";settingsCategory="appearance";RenderPage();Root.UpdateLayout();
+                if(!FormatIconPath("zip").Replace('\\','/').EndsWith("Assets/Formats/Animals/zip.png",StringComparison.OrdinalIgnoreCase))throw new IOException("Animal icon theme did not resolve.");
+                ComboBox? themeCombo=null;var themeImages=new List<Image>();
+                void FindThemeControls(DependencyObject node)
+                {
+                    if(node is ComboBox combo&&combo.Header is string header&&header==T("图标主题","Icon theme"))themeCombo=combo;
+                    if(node is Image image&&image.Source is BitmapImage bitmap&&bitmap.UriSource!=null&&bitmap.UriSource.OriginalString.Replace('\\','/').Contains("/Assets/Formats/Animals/",StringComparison.OrdinalIgnoreCase))themeImages.Add(image);
+                    for(var i=0;i<VisualTreeHelper.GetChildrenCount(node);i++)FindThemeControls(VisualTreeHelper.GetChild(node,i));
+                }
+                FindThemeControls(ContentHost);
+                if(themeCombo==null||themeCombo.SelectedIndex!=1||themeImages.Count<8)throw new IOException("Animal icon theme did not render with its preview.");
+                var probe=new UserSettings{FormatIconTheme="animals"};
+                var serialized=JsonSerializer.Serialize(probe,AppJsonContext.Default.UserSettings);
+                if(JsonSerializer.Deserialize(serialized,AppJsonContext.Default.UserSettings)?.FormatIconTheme!="animals")throw new IOException("Icon theme did not round-trip through the settings JSON context.");
+                report["FormatIconTheme"]="animal format icon theme resolves and renders eight previews; settings JSON round-trips the theme; per-format overrides still take priority";
+            }
+            finally{settings.FormatIconTheme=previousTheme;settingsCategory="compression";RenderPage();}
             var taskJob=new ArchiveJob("verification job","verification target"){Status="verification"};
             var failedJob=new ArchiveJob("verification failed job","verification target"){Status="Failed: verification",Active=false,Percent=100};
             jobs.Add(taskJob);jobs.Add(failedJob);

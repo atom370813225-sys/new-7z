@@ -188,8 +188,11 @@ try{
  }
  $mode='disabled';$modernError=$null
  Remove-Classic
+ # The modern Explorer menu is a Windows 11 feature; Windows 10 always uses the
+ # compatible registry menu, which also keeps the registration fast there.
+ $modernSupported=[Environment]::OSVersion.Version.Build -ge 22000
  if($EnableMenu -eq '1'){
-  if(!$ClassicOnly){
+  if(!$ClassicOnly -and $modernSupported){
    try{
     $signed=$false
     $identityPackage="$RuntimeDirectory/ShellIdentity/New7z.ContextMenu.msix"

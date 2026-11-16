@@ -1,5 +1,5 @@
 #ifndef AppVersion
- #define AppVersion "1.0.6"
+ #define AppVersion "1.0.7"
 #endif
 #ifndef BuildId
  #error BuildId is required
@@ -17,6 +17,13 @@
 #ifndef SetupBaseName
  #define SetupBaseName "New7z-" + AppVersion + "-x64-Setup"
 #endif
+; The Windows 11 setup requires 11; the Windows 10 variant lowers this to 10.0.17763.
+#ifndef MinWindowsVersion
+ #define MinWindowsVersion "10.0.22000"
+#endif
+#ifndef NotesFile
+ #define NotesFile "InstallNotes.txt"
+#endif
 
 [Setup]
 AppId={#InstallerAppId}
@@ -31,7 +38,7 @@ DefaultGroupName=New7z
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64compatible
-MinVersion=10.0.22000
+MinVersion={#MinWindowsVersion}
 WizardStyle=modern dynamic windows11
 SetupIconFile={#PayloadDir}\Assets\New7z.ico
 UninstallDisplayIcon={app}\{#RuntimeDir}\New7z.App.exe
@@ -44,7 +51,7 @@ RestartApplications=no
 DisableProgramGroupPage=yes
 AllowNoIcons=yes
 ChangesAssociations=yes
-InfoBeforeFile=InstallNotes.txt
+InfoBeforeFile={#NotesFile}
 UninstallFilesDir={app}\Uninstall
 SetupLogging=yes
 

@@ -31,6 +31,23 @@ static bool archive(const std::wstring& path){auto attributes=GetFileAttributesW
 static bool allArchives(const std::vector<std::wstring>& paths){return !paths.empty()&&std::all_of(paths.begin(),paths.end(),archive);}
 static DWORD selectionMask(const std::vector<std::wstring>& paths){if(paths.empty())return 0;return allArchives(paths)?(paths.size()==1?31:22):480;}
 static std::wstring quoteJson(const std::wstring& s){std::wstring out=L"\"";for(auto c:s){if(c==L'"')out+=L"\\\"";else if(c==L'\\')out+=L"\\\\";else if(c<32){wchar_t b[8];swprintf_s(b,L"\\u%04x",unsigned(c));out+=b;}else out+=c;}return out+L"\"";}
+// Windows 11 keeps the task process out of Explorer's job object with the desktop app
+// breakaway policy. Older systems may reject that attribute, so launch without it there.
+static BOOL createDetached(const std::wstring& executable,std::wstring& command,PROCESS_INFORMATION& process,DWORD& error){
+ SIZE_T bytes=0;InitializeProcThreadAttributeList(nullptr,1,0,&bytes);
+ auto attributes=static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(HeapAlloc(GetProcessHeap(),0,bytes));
+ bool listReady=attributes&&InitializeProcThreadAttributeList(attributes,1,0,&bytes);
+ DWORD policy=PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_ENABLE_PROCESS_TREE;
+ bool policyReady=listReady&&UpdateProcThreadAttribute(attributes,0,PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY,&policy,sizeof(policy),nullptr,nullptr);
+ STARTUPINFOEXW startup{};startup.StartupInfo.cb=policyReady?sizeof(STARTUPINFOEXW):sizeof(STARTUPINFOW);
+ DWORD flags=0;
+ if(policyReady){startup.lpAttributeList=attributes;flags=EXTENDED_STARTUPINFO_PRESENT;}
+ BOOL created=CreateProcessW(executable.c_str(),command.data(),nullptr,nullptr,FALSE,flags,nullptr,nullptr,&startup.StartupInfo,&process);
+ error=created?ERROR_SUCCESS:GetLastError();
+ if(listReady)DeleteProcThreadAttributeList(attributes);
+ if(attributes)HeapFree(GetProcessHeap(),0,attributes);
+ return created;
+}
 static HRESULT dispatch(const std::wstring& action,const std::vector<std::wstring>& paths){
  if(paths.empty())return E_INVALIDARG;
  wchar_t base[32768];if(!GetEnvironmentVariableW(L"LOCALAPPDATA",base,32768))return E_FAIL;
@@ -40,12 +57,8 @@ static HRESULT dispatch(const std::wstring& action,const std::vector<std::wstrin
  int length=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,json.c_str(),int(json.size()),nullptr,0,nullptr,nullptr);if(length<=0||length>1024*1024)return E_INVALIDARG;std::string utf8(length,0);WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,json.c_str(),int(json.size()),utf8.data(),length,nullptr,nullptr);
  HANDLE output=CreateFileW(file.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);if(output==INVALID_HANDLE_VALUE)return HRESULT_FROM_WIN32(GetLastError());DWORD written=0;BOOL ok=WriteFile(output,utf8.data(),DWORD(utf8.size()),&written,nullptr);CloseHandle(output);if(!ok||written!=utf8.size()){DeleteFileW(file.c_str());return E_FAIL;}
  auto executable=appPath();executable=executable.substr(0,executable.find_last_of(L'\\')+1)+L"New7z.ShellHost.exe";auto command=L"\""+executable+L"\" --shell-request \""+file+L"\"";
- SIZE_T attributeBytes=0;InitializeProcThreadAttributeList(nullptr,1,0,&attributeBytes);auto attributes=static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(HeapAlloc(GetProcessHeap(),0,attributeBytes));if(!attributes)return E_OUTOFMEMORY;
- if(!InitializeProcThreadAttributeList(attributes,1,0,&attributeBytes)){auto error=GetLastError();HeapFree(GetProcessHeap(),0,attributes);return HRESULT_FROM_WIN32(error);}
- DWORD policy=PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_ENABLE_PROCESS_TREE;
- if(!UpdateProcThreadAttribute(attributes,0,PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY,&policy,sizeof(policy),nullptr,nullptr)){auto error=GetLastError();DeleteProcThreadAttributeList(attributes);HeapFree(GetProcessHeap(),0,attributes);return HRESULT_FROM_WIN32(error);}
- STARTUPINFOEXW startup{};startup.StartupInfo.cb=sizeof(startup);startup.lpAttributeList=attributes;PROCESS_INFORMATION process{};
- BOOL created=CreateProcessW(executable.c_str(),command.data(),nullptr,nullptr,FALSE,EXTENDED_STARTUPINFO_PRESENT,nullptr,nullptr,&startup.StartupInfo,&process);auto error=GetLastError();DeleteProcThreadAttributeList(attributes);HeapFree(GetProcessHeap(),0,attributes);
+ PROCESS_INFORMATION process{};DWORD error=ERROR_SUCCESS;
+ BOOL created=createDetached(executable,command,process,error);
  if(!created){DeleteFileW(file.c_str());return HRESULT_FROM_WIN32(error);}CloseHandle(process.hThread);CloseHandle(process.hProcess);return S_OK;
 }
 class Command;

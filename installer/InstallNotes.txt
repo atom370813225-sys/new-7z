@@ -1,4 +1,4 @@
-New7z 0.1.6 · Windows 11 x64
+New7z 1.0.7 · Windows 11 x64
 作者：王国梁 · 自有代码采用 MIT 开源许可
 
 此安装包包含 .NET、WinUI 和 7-Zip 引擎，可离线安装和运行，不需要安装完整 7-Zip。

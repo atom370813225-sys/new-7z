@@ -1,14 +1,16 @@
 # New7z
 
-[![Release](https://img.shields.io/github/v/release/outsideoftime/new-7z?label=release)](https://github.com/outsideoftime/new-7z/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%2011%20x64-0078D4)](#)
+[![Release](https://img.shields.io/github/v/release/outsideoftime/new-7z?label=release)](https://github.com/outsideoftime/new-7z/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011%20x64-0078D4)](#)
 
-**New7z（新 7z）** 是一款面向 Windows 11 的开源免费压缩 / 解压软件，使用 WinUI 3 界面和完整的 7-Zip 引擎。支持创建 7z、ZIP、TAR，读取和解压 7z、ZIP、RAR、TAR、GZ、XZ、BZ2、ISO 等常见压缩格式；中文/英文界面、本地离线运行，不需要另行安装 7-Zip 或 .NET 运行库。当前正式版：**1.0.6**，Windows 11 x64。
+**New7z（新 7z）** 是一款面向 Windows 10 / 11 的开源免费压缩 / 解压软件，使用 WinUI 3 界面和完整的 7-Zip 引擎。支持创建 7z、ZIP、TAR，读取和解压 7z、ZIP、RAR、TAR、GZ、XZ、BZ2、ISO 等常见压缩格式；中文/英文界面、本地离线运行，不需要另行安装 7-Zip 或 .NET 运行库。当前正式版：**1.0.7**，Windows 10 / 11 x64。
 
 [下载安装包](https://github.com/outsideoftime/new-7z/releases/latest) · [操作说明](docs/操作说明.md) · [MIT 许可](LICENSE) · [第三方许可](THIRD-PARTY-NOTICES.md) · [安装与分发说明](docs/安装包发布.md)
 
 ## 使用
 
-下载安装 EXE，按向导安装到当前用户目录。安装包约 **23.63 MiB**，包含 .NET、WinUI 和自编译 7-Zip 引擎，可离线运行，无需安装完整 7-Zip。当前发行文件尚未进行发布者代码签名。详细操作见 [操作说明](docs/操作说明.md)。
+下载安装 EXE，按向导安装到当前用户目录。安装包约 **29.01 MiB**，包含 .NET、WinUI 和自编译 7-Zip 引擎，可离线运行，无需安装完整 7-Zip。当前发行文件尚未进行发布者代码签名。详细操作见 [操作说明](docs/操作说明.md)。
+
+Windows 10 x64（1809 及以上）请下载同一 Release 中的 `New7z-<版本>-win10-x64-Setup.exe`。它与 Windows 11 安装包使用相同的程序文件和版本号，只放宽了系统要求；Windows 10 上自动使用兼容右键菜单，Windows 11 安装包和现代菜单保持不变。
 
 - 创建 7z、ZIP、TAR，7z/ZIP 支持密码与 7z 文件名加密；读取、解压和校验引擎支持的归档。设置中可选择默认格式，并分别指定 7z/ZIP 的默认压缩方法。
 - 压缩包内直接预览图片和文本/代码文件，常见源码、配置、脚本扩展名（.cs、.py、.rs、.toml、Makefile 等）都可当作文本查看；支持中文文件名、文件夹、多选解压。
@@ -19,7 +21,7 @@
 - 默认注册到 Windows「默认应用」及 7z、ZIP、RAR、TAR、GZ、XZ、BZ2、ISO 的「打开方式」；设置 → 文件关联 → **选择默认应用**，由用户选择默认格式。
 - 应用支持浅色、深色、跟随系统，以及应用内 PNG 图标替换：品牌图标和 7z、ZIP、RAR、TAR、GZ、BZ2、XZ、ISO 格式图标均可替换并恢复默认。
 
-勾选菜单任务后，资源管理器右键会出现 **New7z** 子菜单：系统具备受信任身份包或现有开发注册条件时使用 Windows 11 现代菜单，否则退回兼容菜单。两种模式只注册一种，不会重复显示。不会自动开启开发者模式、导入证书、隐藏 Windows 自带压缩菜单或强制覆盖默认应用。
+勾选菜单任务后，资源管理器右键会出现 **New7z** 子菜单：Windows 11 在系统具备受信任身份包或现有开发注册条件时使用现代菜单，否则退回兼容菜单；Windows 10 始终使用兼容菜单。两种模式只注册一种，不会重复显示。不会自动开启开发者模式、导入证书、隐藏 Windows 自带压缩菜单或强制覆盖默认应用。
 
 普通未加密 ZIP 的标准/更快模式使用流式 ZIP 编码；体积优先、密码 ZIP 和全部 7z 使用 7-Zip。读取、预览、解压仍使用 7-Zip。详见 [ZIP 性能记录](docs/ZIP性能优化.md)。
 
@@ -34,6 +36,14 @@
 | 7z | ZIP | RAR | TAR | GZ | BZ2 | XZ | ISO |
 |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | ![7z](src/New7z.App/Assets/Formats/7z.png) | ![ZIP](src/New7z.App/Assets/Formats/zip.png) | ![RAR](src/New7z.App/Assets/Formats/rar.png) | ![TAR](src/New7z.App/Assets/Formats/tar.png) | ![GZ](src/New7z.App/Assets/Formats/gz.png) | ![BZ2](src/New7z.App/Assets/Formats/bz2.png) | ![XZ](src/New7z.App/Assets/Formats/xz.png) | ![ISO](src/New7z.App/Assets/Formats/iso.png) |
+
+设置 → 外观与图标 → 压缩文件图标 → **图标主题** 还可以切换到内置的「动物图标」；它只替换应用内的格式图标，不修改资源管理器中的文件关联图标。
+
+| 7z | ZIP | RAR | TAR | GZ | BZ2 | XZ | ISO |
+|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| ![7z](src/New7z.App/Assets/Formats/Animals/7z.png) | ![ZIP](src/New7z.App/Assets/Formats/Animals/zip.png) | ![RAR](src/New7z.App/Assets/Formats/Animals/rar.png) | ![TAR](src/New7z.App/Assets/Formats/Animals/tar.png) | ![GZ](src/New7z.App/Assets/Formats/Animals/gz.png) | ![BZ2](src/New7z.App/Assets/Formats/Animals/bz2.png) | ![XZ](src/New7z.App/Assets/Formats/Animals/xz.png) | ![ISO](src/New7z.App/Assets/Formats/Animals/iso.png) |
+
+也可以使用第三方图标合集手动替换单个格式。变形金刚主题合集见 [第三方图标合集](docs/第三方图标合集.md)；该图片版权归 Hasbro / Takara Tomy 等原权利人所有，不属于 New7z 的 MIT 许可，也不随安装包分发。
 
 ## 常见问题
 
@@ -57,7 +67,7 @@ Windows 11 自带的压缩只支持 ZIP；New7z 支持 7z/ZIP/TAR 压缩，能�
 
 ## English
 
-New7z is an open-source Windows 11 archiver built with WinUI 3 and the full 7-Zip engine. It creates 7z, ZIP and TAR archives, extracts 7z, ZIP, RAR, TAR, GZ, XZ, BZ2 and ISO, previews images, text and source files inside archives, and integrates with the Explorer context menu and Windows default apps. It runs offline and does not require a separate 7-Zip or .NET runtime installation.
+New7z is an open-source Windows 10 / 11 archiver built with WinUI 3 and the full 7-Zip engine. It creates 7z, ZIP and TAR archives, extracts 7z, ZIP, RAR, TAR, GZ, XZ, BZ2 and ISO, previews images, text and source files inside archives, and integrates with the Explorer context menu and Windows default apps. Windows 10 x64 (1809 or later) uses the separate `New7z-<version>-win10-x64-Setup.exe` with the compatible context menu; both installers share the same program files. It runs offline and does not require a separate 7-Zip or .NET runtime installation.
 
 ## 构建
 
@@ -68,7 +78,7 @@ New7z is an open-source Windows 11 archiver built with WinUI 3 and the full 7-Zi
 ./scripts/build.ps1
 # 下载并验证 Inno Setup 6.7.4 编译器，仅用于打包
 ./scripts/get-build-tools.ps1
-# 精简自包含安装包，输出 artifacts/releases
+# 精简自包含安装包，输出 artifacts/releases（同时生成 Windows 10 兼容安装器）
 ./scripts/build-installer.ps1
 # Microsoft Store 上传包，输出 artifacts/msix（需先填入 Partner Center 标识）
 ./scripts/build-msix.ps1 -RequireStoreIdentity

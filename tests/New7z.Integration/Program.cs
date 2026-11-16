@@ -264,6 +264,13 @@ try
     Assert(UpdateChecker.ParseGiteeRelease("{\"tag_name\":\"v1.0.0\"}",new Version(1,0,0))==null,"gitee release older than current is ignored");
     var giteeList=UpdateChecker.ParseGiteeReleases("["+giteeRelease+",{\"tag_name\":\"v9.9.8\",\"prerelease\":false,\"assets\":[]}]",new Version(1,0,0));
     Assert(giteeList!=null&&giteeList.Version==new Version(9,9,9),"gitee release list picks the highest version, not the newest release");
+    var dualChannelRelease="{\"tag_name\":\"v9.9.9\",\"prerelease\":false,\"assets\":[{\"name\":\"New7z-9.9.9-win10-x64-Setup.exe\",\"browser_download_url\":\"https://gitee.com/wgliangzero/new-7z/releases/download/v9.9.9/New7z-9.9.9-win10-x64-Setup.exe\"},{\"name\":\"New7z-9.9.9-x64-Setup.exe\",\"browser_download_url\":\"https://gitee.com/wgliangzero/new-7z/releases/download/v9.9.9/New7z-9.9.9-x64-Setup.exe\"},{\"name\":\"SHA256SUMS.txt\",\"browser_download_url\":\"https://gitee.com/wgliangzero/new-7z/releases/download/v9.9.9/SHA256SUMS.txt\"}]}";
+    var win10Update=UpdateChecker.ParseGiteeRelease(dualChannelRelease,new Version(1,0,0),win10:true);
+    Assert(win10Update!=null&&win10Update.InstallerName=="New7z-9.9.9-win10-x64-Setup.exe"&&win10Update.InstallerUrl.Contains("win10"),"windows 10 update selects the win10 installer");
+    var win11Update=UpdateChecker.ParseGiteeRelease(dualChannelRelease,new Version(1,0,0),win10:false);
+    Assert(win11Update!=null&&win11Update.InstallerName=="New7z-9.9.9-x64-Setup.exe","windows 11 update ignores the win10 installer");
+    var win10SourceOnly=UpdateChecker.ParseGiteeRelease("{\"tag_name\":\"v9.9.9\",\"prerelease\":false,\"assets\":[]}",new Version(1,0,0),win10:true);
+    Assert(win10SourceOnly!=null&&win10SourceOnly.InstallerUrl.EndsWith("/New7z-9.9.9-win10-x64-Setup.exe"),"windows 10 update falls back to the win10 download path");
     foreach(var unsafePath in new[]{"../escape.txt","/absolute.txt","C:\\escape.txt","file.txt:ads","CON.txt","trailing. "})
     {try{ArchiveEngine.ResolveOutput(root,unsafePath);throw new Exception("Unsafe path accepted: "+unsafePath);}catch(IOException){checks.Add("reject "+unsafePath);}}
     var malicious=Path.Combine(root,"malicious.zip");using(var zip=ZipFile.Open(malicious,ZipArchiveMode.Create))

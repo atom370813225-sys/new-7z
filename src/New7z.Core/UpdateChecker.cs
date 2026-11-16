@@ -31,6 +31,12 @@ public static class UpdateChecker
         version=new Version(0,0);
         return false;
     }
+    // Windows 10 cannot install the Windows 11 setup or show the modern context menu.
+    // Both installers ship the same payload and version; only the package name differs.
+    private static bool NeedsWin10Installer=>!OperatingSystem.IsWindowsVersionAtLeast(10,0,22000);
+    private static string InstallerName(Version version,bool win10)=>$"New7z-{version}{(win10?"-win10":"")}-x64-Setup.exe";
+    private static bool IsInstallerAsset(string name)=>name.StartsWith("New7z-",StringComparison.OrdinalIgnoreCase)&&name.EndsWith("-x64-Setup.exe",StringComparison.OrdinalIgnoreCase);
+    private static bool IsChannelAsset(string name,bool win10)=>name.Contains("-win10-",StringComparison.OrdinalIgnoreCase)==win10;
     public static async Task<UpdateInfo?> CheckAsync(Version current,CancellationToken cancellation=default)
     {
         Exception? githubError=null;
@@ -68,7 +74,7 @@ public static class UpdateChecker
             if(!TryParseTag(tag,out var version))continue;
             if(Normalize(version)<=Normalize(current))return null;
             var notes=HtmlToText(entry.Element(atom+"content")?.Value??"");
-            var installerName=$"New7z-{version}-x64-Setup.exe";
+            var installerName=InstallerName(version,NeedsWin10Installer);
             var baseUrl=$"https://github.com/outsideoftime/new-7z/releases/download/{tag}/";
             var (mirrorInstaller,mirrorChecksums)=GiteeUrls(tag,installerName);
             return new(version,notes,baseUrl+installerName,installerName,baseUrl+"SHA256SUMS.txt",mirrorInstaller,mirrorChecksums);
@@ -84,24 +90,24 @@ public static class UpdateChecker
         var text=await response.Content.ReadAsStringAsync(cancellation);
         return ParseGiteeReleases(text,current);
     }
-    public static UpdateInfo? ParseGiteeReleases(string json,Version current)
+    public static UpdateInfo? ParseGiteeReleases(string json,Version current,bool? win10=null)
     {
         using var document=JsonDocument.Parse(json);
-        if(document.RootElement.ValueKind!=JsonValueKind.Array)return ParseGiteeRelease(json,current);
+        if(document.RootElement.ValueKind!=JsonValueKind.Array)return ParseGiteeRelease(json,current,win10);
         UpdateInfo? best=null;
         foreach(var release in document.RootElement.EnumerateArray())
         {
-            var info=ParseGiteeRelease(release,current);
+            var info=ParseGiteeRelease(release,current,win10??NeedsWin10Installer);
             if(info!=null&&(best==null||info.Version>best.Version))best=info;
         }
         return best;
     }
-    public static UpdateInfo? ParseGiteeRelease(string json,Version current)
+    public static UpdateInfo? ParseGiteeRelease(string json,Version current,bool? win10=null)
     {
         using var document=JsonDocument.Parse(json);
-        return ParseGiteeRelease(document.RootElement,current);
+        return ParseGiteeRelease(document.RootElement,current,win10??NeedsWin10Installer);
     }
-    private static UpdateInfo? ParseGiteeRelease(JsonElement root,Version current)
+    private static UpdateInfo? ParseGiteeRelease(JsonElement root,Version current,bool win10)
     {
         if(root.TryGetProperty("prerelease",out var prerelease)&&prerelease.ValueKind==JsonValueKind.True)return null;
         if(!root.TryGetProperty("tag_name",out var tagNode)||tagNode.GetString() is not { } tag)return null;
@@ -115,14 +121,14 @@ public static class UpdateChecker
                 var assetName=asset.TryGetProperty("name",out var n)?n.GetString()??"":"";
                 var url=asset.TryGetProperty("browser_download_url",out var u)?u.GetString()??"":"";
                 if(assetName.Equals("SHA256SUMS.txt",StringComparison.OrdinalIgnoreCase)){checksumsUrl=url;continue;}
-                if(installerUrl==null&&assetName.StartsWith("New7z-",StringComparison.OrdinalIgnoreCase)&&assetName.EndsWith("-x64-Setup.exe",StringComparison.OrdinalIgnoreCase)){installerName=assetName;installerUrl=url;}
+                if(installerUrl==null&&IsInstallerAsset(assetName)&&IsChannelAsset(assetName,win10)){installerName=assetName;installerUrl=url;}
             }
         }
         if(installerUrl==null||installerName==null)
         {
             // Gitee only lists source archives as assets for some releases; uploaded
             // attachments still live at the standard download path.
-            installerName=$"New7z-{version}-x64-Setup.exe";
+            installerName=InstallerName(version,win10);
             (installerUrl,checksumsUrl)=GiteeUrls(tag,installerName);
         }
         return new(version,notes,installerUrl,installerName,checksumsUrl);
@@ -157,6 +163,7 @@ public static class UpdateChecker
         if(!TryParseTag(tag,out var version)||Normalize(version)<=Normalize(current))return null;
         var notes=root.TryGetProperty("body",out var bodyNode)?bodyNode.GetString()??"":"";
         string? installerUrl=null,installerName=null,checksumsUrl=null;
+        var win10=NeedsWin10Installer;
         if(root.TryGetProperty("assets",out var assets)&&assets.ValueKind==JsonValueKind.Array)
         {
             foreach(var asset in assets.EnumerateArray())
@@ -164,7 +171,7 @@ public static class UpdateChecker
                 var assetName=asset.TryGetProperty("name",out var n)?n.GetString()??"":"";
                 var url=asset.TryGetProperty("browser_download_url",out var u)?u.GetString()??"":"";
                 if(assetName.Equals("SHA256SUMS.txt",StringComparison.OrdinalIgnoreCase)){checksumsUrl=url;continue;}
-                if(installerUrl==null&&assetName.StartsWith("New7z-",StringComparison.OrdinalIgnoreCase)&&assetName.EndsWith("-x64-Setup.exe",StringComparison.OrdinalIgnoreCase)){installerName=assetName;installerUrl=url;}
+                if(installerUrl==null&&IsInstallerAsset(assetName)&&IsChannelAsset(assetName,win10)){installerName=assetName;installerUrl=url;}
             }
         }
         if(installerUrl==null||installerName==null)return null;
