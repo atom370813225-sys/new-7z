@@ -2,13 +2,13 @@
 
 [![Release](https://img.shields.io/github/v/release/outsideoftime/new-7z?label=release)](https://github.com/outsideoftime/new-7z/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011%20x64-0078D4)](#)
 
-**New7z（新 7z）** 是一款面向 Windows 10 / 11 的开源免费压缩 / 解压软件，使用 WinUI 3 界面和完整的 7-Zip 引擎。支持创建 7z、ZIP、TAR，读取和解压 7z、ZIP、RAR、TAR、GZ、XZ、BZ2、ISO 等常见压缩格式；中文/英文界面、本地离线运行，不需要另行安装 7-Zip 或 .NET 运行库。当前正式版：**1.0.7**，Windows 10 / 11 x64。
+**New7z（新 7z）** 是一款面向 Windows 10 / 11 的开源免费压缩 / 解压软件，使用 WinUI 3 界面和完整的 7-Zip 引擎。支持创建 7z、ZIP、TAR，读取和解压 7z、ZIP、RAR、TAR、GZ、XZ、BZ2、ISO 等常见压缩格式；中文/英文界面、本地离线运行，不需要另行安装 7-Zip 或 .NET 运行库。当前正式版：**1.0.8**，Windows 10 / 11 x64。
 
 [下载安装包](https://github.com/outsideoftime/new-7z/releases/latest) · [操作说明](docs/操作说明.md) · [MIT 许可](LICENSE) · [第三方许可](THIRD-PARTY-NOTICES.md) · [安装与分发说明](docs/安装包发布.md)
 
 ## 使用
 
-下载安装 EXE，按向导安装到当前用户目录。安装包约 **29.01 MiB**，包含 .NET、WinUI 和自编译 7-Zip 引擎，可离线运行，无需安装完整 7-Zip。当前发行文件尚未进行发布者代码签名。详细操作见 [操作说明](docs/操作说明.md)。
+下载安装 EXE，按向导安装到当前用户目录。安装包约 **30.08 MiB**，包含 .NET、WinUI 和自编译 7-Zip 引擎，可离线运行，无需安装完整 7-Zip。当前发行文件尚未进行发布者代码签名。详细操作见 [操作说明](docs/操作说明.md)。
 
 Windows 10 x64（1809 及以上）请下载同一 Release 中的 `New7z-<版本>-win10-x64-Setup.exe`。它与 Windows 11 安装包使用相同的程序文件和版本号，只放宽了系统要求；Windows 10 上自动使用兼容右键菜单，Windows 11 安装包和现代菜单保持不变。
 
@@ -37,7 +37,7 @@ Windows 10 x64（1809 及以上）请下载同一 Release 中的 `New7z-<版本>
 |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | ![7z](src/New7z.App/Assets/Formats/7z.png) | ![ZIP](src/New7z.App/Assets/Formats/zip.png) | ![RAR](src/New7z.App/Assets/Formats/rar.png) | ![TAR](src/New7z.App/Assets/Formats/tar.png) | ![GZ](src/New7z.App/Assets/Formats/gz.png) | ![BZ2](src/New7z.App/Assets/Formats/bz2.png) | ![XZ](src/New7z.App/Assets/Formats/xz.png) | ![ISO](src/New7z.App/Assets/Formats/iso.png) |
 
-设置 → 外观与图标 → 压缩文件图标 → **图标主题** 还可以切换到内置的「动物图标」；它只替换应用内的格式图标，不修改资源管理器中的文件关联图标。
+设置 → 外观与图标 → 压缩文件图标 → **图标主题** 还可以切换到内置的「动物图标」。主题会同时更新 New7z 的文件关联图标；资源管理器只有在对应格式的默认程序是 New7z 时才显示这些图标，可在设置 → 文件关联 → 选择默认应用中调整。单个格式的自定义 PNG 仍然只影响应用内。
 
 | 7z | ZIP | RAR | TAR | GZ | BZ2 | XZ | ISO |
 |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|

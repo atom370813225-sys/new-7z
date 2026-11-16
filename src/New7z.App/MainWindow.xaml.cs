@@ -82,6 +82,7 @@ public sealed partial class MainWindow:Window
             _=Task.Run(CleanupDragCache);
             _=Task.Run(()=>{try{SaveExplorerLanguage();}catch{}});
             ShowPendingIntegrationError();
+            _=Task.Run(()=>{try{ExplorerIcons.Apply(settings.FormatIconTheme);}catch{}});
             var arg=startupArchive??launchArgs.FirstOrDefault(File.Exists);if(arg!=null)await OpenArchiveAsync(arg);
             if(settings.AutoCheckUpdates&&!AppEnvironment.IsPackaged)_=CheckForUpdatesAsync(false);
         };
@@ -698,13 +699,13 @@ public sealed partial class MainWindow:Window
 
         var formats=Stack(12);
         formats.Children.Add(Text(T("压缩文件图标","Archive icons"),18,true));
-        formats.Children.Add(Text(T("替换「最近使用」等位置显示的 7z、ZIP 等格式图标。不会修改资源管理器中的文件关联图标。","Replace the 7z, ZIP and other format icons shown inside the app, such as in Recent. Explorer file-association icons are not changed."),12));
+        formats.Children.Add(Text(T("替换「最近使用」等位置显示的格式图标；图标主题会同步到 New7z 的文件关联图标。资源管理器只有在对应格式的默认程序为 New7z 时才显示这些图标。","Replace the format icons shown inside the app; the icon theme is also applied to New7z file associations. Explorer shows them only when New7z is the default app for that format."),12));
         var theme=new ComboBox{Header=T("图标主题","Icon theme"),ItemsSource=new[]{T("默认图标","Default icons"),T("动物图标","Animal icons")},SelectedIndex=settings.FormatIconTheme=="animals"?1:0,MinWidth=240};
         theme.SelectionChanged+=(_,_)=>
         {
             var next=theme.SelectedIndex==1?"animals":"default";
             if(next==settings.FormatIconTheme)return;
-            settings.FormatIconTheme=next;settings.Save();RenderPage();
+            settings.FormatIconTheme=next;settings.Save();ExplorerIcons.Apply(next);RenderPage();
         };
         formats.Children.Add(theme);
         var themePreview=new StackPanel{Orientation=Orientation.Horizontal,Spacing=6};
@@ -714,7 +715,12 @@ public sealed partial class MainWindow:Window
             if(File.Exists(file))themePreview.Children.Add(new Image{Width=32,Height=32,Source=new BitmapImage(new Uri(file))});
         }
         formats.Children.Add(themePreview);
-        formats.Children.Add(Text(T("单个格式的自定义图标优先于主题；「恢复默认」会回到当前主题的图标。","A per-format custom icon takes priority over the theme; Restore default uses the theme icon."),12));
+        formats.Children.Add(Text(T("单个格式的自定义图标优先于主题，且只影响应用内；「恢复默认」会回到当前主题的图标。","A per-format custom icon takes priority over the theme and affects the app only; Restore default uses the theme icon."),12));
+        formats.Children.Add(Button(T("选择默认应用","Choose default apps"),(_,_)=>
+        {
+            try{Process.Start(new ProcessStartInfo("ms-settings:defaultapps?registeredAppUser="+Uri.EscapeDataString("New7z")){UseShellExecute=true});}
+            catch(Exception ex){Notify(T("无法打开 Windows 设置：","Cannot open Windows Settings: ")+ex.Message,InfoBarSeverity.Error);}
+        }));
         foreach(var ext in FormatNames)
         {
             var row=new Grid{ColumnSpacing=12};

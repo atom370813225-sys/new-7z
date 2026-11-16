@@ -7,6 +7,21 @@
  [switch]$ClassicOnly
 )
 $ErrorActionPreference='Stop'
+# Inno launches Windows PowerShell with the environment it inherited. When the setup
+# is started from PowerShell 7, PSModulePath can point at 64-bit modules that the
+# 32-bit Windows PowerShell cannot load, making Get-AuthenticodeSignature unavailable.
+# Put this PowerShell's own module directory first so the modern-menu probe works.
+$env:PSModulePath=@(
+ (Join-Path $PSHOME 'Modules'),
+ (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'),
+ (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Modules')
+) -join ';'
+# The uninstaller may have already removed the working directory; Add-Type needs a
+# valid current directory to start the C# compiler.
+if($env:TEMP -and (Test-Path -LiteralPath $env:TEMP)){
+ Set-Location -LiteralPath $env:TEMP
+ [Environment]::CurrentDirectory=$env:TEMP
+}
 $InstallRoot=[IO.Path]::GetFullPath($InstallRoot).TrimEnd('\')
 $statePath=Join-Path $InstallRoot 'installation.json'
 $classId='{642CF40A-831E-42A9-AC63-F5A0ABDD5C18}'

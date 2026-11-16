@@ -1,5 +1,5 @@
 #ifndef AppVersion
- #define AppVersion "1.0.7"
+ #define AppVersion "1.0.8"
 #endif
 #ifndef BuildId
  #error BuildId is required
@@ -184,7 +184,9 @@ begin
       so the installer does not appear frozen. }
     DeleteFile(ExpandConstant('{app}\integration-error.txt'));
     Log('Starting shell integration in the background.');
-    if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    // The modern menu probe and Appx cmdlets need the 64-bit Windows PowerShell.
+    // The sys constant resolves to SysWOW64 when the setup is started from a 32-bit parent.
+    if not Exec(ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe'),
       IntegrationParameters('Install', True), '', SW_HIDE, ewNoWait, ResultCode) then begin
       Log('Could not start shell integration.');
       SuppressibleMsgBox('程序文件已安装，但右键菜单注册组件未能启动。请稍后在设置中点击「修复右键菜单注册」。', mbError, MB_OK, IDOK);
@@ -198,7 +200,7 @@ begin
   if CurUninstallStep = usUninstall then begin
     Parameters := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' +
       ExpandConstant('{app}\Installer\Integrate-Shell.ps1') + '" -Action Remove -InstallRoot "' + ExpandConstant('{app}') + '"';
-    if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
+    if not Exec(ExpandConstant('{sysnative}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
       RaiseException('无法移除右键菜单，请关闭 New7z 后重试卸载。');
   end;
