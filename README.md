@@ -12,7 +12,7 @@
 
 Windows 10 x64（1809 及以上）请下载同一 Release 中的 `New7z-<版本>-win10-x64-Setup.exe`。它与 Windows 11 安装包使用相同的程序文件和版本号，只放宽了系统要求；Windows 10 上自动使用兼容右键菜单，Windows 11 安装包和现代菜单保持不变。
 
-Windows 11 ARM64 的原生构建和云端验证流程见 [ARM64 说明](docs/ARM64.md)。ARM64 当前按预览版验证，不支持 Windows 10 ARM64。
+Windows 11 ARM64 提供 [1.0.10 ARM64 预览安装包](https://github.com/outsideoftime/new-7z/releases/tag/v1.0.10-arm64-preview)，已通过原生 ARM64 云端的功能、安装、升级与卸载测试，详情见 [ARM64 说明](docs/ARM64.md)。当前不支持 Windows 10 ARM64。
 
 - 创建 7z、ZIP、TAR，7z/ZIP 支持密码与 7z 文件名加密；读取、解压和校验引擎支持的归档。设置中可选择默认格式，并分别指定 7z/ZIP 的默认压缩方法。
 - 压缩包内直接预览图片和文本/代码文件，常见源码、配置、脚本扩展名（.cs、.py、.rs、.toml、Makefile 等）都可当作文本查看；支持中文文件名、文件夹、多选解压。
