@@ -25,6 +25,7 @@ public static class UpdateChecker
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return client;
     }
+    private static bool CanRetry(Exception error,CancellationToken cancellation)=>!cancellation.IsCancellationRequested&&(error is HttpRequestException or IOException or JsonException or System.Xml.XmlException or OperationCanceledException);
     public static bool TryParseTag(string tag,out Version version)
     {
         var text=tag.Trim().TrimStart('v','V');
@@ -43,18 +44,18 @@ public static class UpdateChecker
     {
         Exception? githubError=null;
         try{return await CheckApiAsync(current,cancellation);}
-        catch(Exception ex) when(ex is HttpRequestException or IOException)
+        catch(Exception ex) when(CanRetry(ex,cancellation))
         {
             // The unauthenticated REST API is limited to 60 requests per hour per IP; the
             // public releases feed is not, so use it when the API is unavailable.
             githubError=ex;
         }
         try{return await CheckFeedAsync(current,cancellation);}
-        catch(Exception ex) when(ex is HttpRequestException or IOException or System.Xml.XmlException){githubError=ex;}
+        catch(Exception ex) when(CanRetry(ex,cancellation)){githubError=ex;}
         // Gitee mirrors the same releases; it is the fallback when GitHub is unreachable or
         // rate-limited, including networks where github.com itself is blocked.
         try{return await CheckGiteeAsync(current,cancellation);}
-        catch(Exception ex) when(ex is HttpRequestException or IOException or JsonException)
+        catch(Exception ex) when(CanRetry(ex,cancellation))
         {
             throw new IOException(Loc.T("无法读取 GitHub 或 Gitee 发布信息，请检查网络后重试。", "Could not read release information from GitHub or Gitee. Check your network and try again."),githubError??ex);
         }
@@ -205,7 +206,7 @@ public static class UpdateChecker
     public static async Task DownloadAsync(UpdateInfo update,string target,IProgress<double>? progress=null,CancellationToken cancellation=default)
     {
         try{await DownloadFromAsync(update.InstallerUrl,target,progress,cancellation);}
-        catch(Exception ex) when((ex is HttpRequestException or IOException)&&!cancellation.IsCancellationRequested)
+        catch(Exception ex) when(CanRetry(ex,cancellation))
         {
             if(update.MirrorInstallerUrl==null)throw;
             try{File.Delete(target);}catch{}
@@ -254,7 +255,7 @@ public static class UpdateChecker
         {
             if(url==null)continue;
             try{return await Client.GetStringAsync(url,cancellation);}
-            catch(Exception ex) when((ex is HttpRequestException or IOException)&&!cancellation.IsCancellationRequested){}
+            catch(Exception ex) when(CanRetry(ex,cancellation)){}
         }
         return null;
     }

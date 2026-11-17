@@ -78,6 +78,17 @@ public sealed partial class MainWindow
             settingsLabels.Clear();CollectSettingsLabels(ContentHost);
             if(!settingsLabels.Contains(T("默认压缩格式","Default archive format"))||!settingsLabels.Contains(T("默认压缩方法","Default compression method")))throw new IOException("Compression defaults did not render.");
             report["Settings"]="rendered settings hub and the compression defaults category";
+            settingsCategory="general";RenderPage();Root.UpdateLayout();
+            ComboBox? intervalChoice=null;
+            void FindInterval(DependencyObject node)
+            {
+                if(node is ComboBox combo&&combo.Header as string==T("自动检查间隔","Automatic check interval"))intervalChoice=combo;
+                for(var i=0;i<VisualTreeHelper.GetChildrenCount(node);i++)FindInterval(VisualTreeHelper.GetChild(node,i));
+            }
+            FindInterval(ContentHost);
+            if(!AppEnvironment.IsPackaged&&(intervalChoice==null||intervalChoice.Items.Count!=5||intervalChoice.SelectedIndex<0))throw new IOException("Automatic update interval controls did not render.");
+            if(intervalChoice!=null){intervalChoice.IsDropDownOpen=true;Root.UpdateLayout();intervalChoice.IsDropDownOpen=false;}
+            report["UpdateInterval"]="native interval selector renders five options and opens without saving preferences";
             var previousTheme=settings.FormatIconTheme;
             var previousIcons=settings.FormatIcons;settings.FormatIcons=[];
             try
@@ -134,6 +145,22 @@ public sealed partial class MainWindow
             taskLabels.Clear();ReadTaskLabels(ContentHost);
             if(taskLabels.Contains(taskJob.Title)||taskLabels.Contains(lastJob.Title))throw new IOException("Completed task reappeared after navigation.");
             report["Tasks"]="successful job removed in place without rebuilding the page; failed job at 100% retained; last completion shows empty state; no completed jobs after navigation";
+            var attempts=0;var retryName="verification retry "+Guid.NewGuid().ToString("N");
+            QueueJob(retryName,"verification target",(_,_)=>++attempts==1?Task.FromException(new IOException("expected retry probe")):Task.CompletedTask,false);
+            for(var wait=0;wait<600&&jobs.Any(job=>job.Title==retryName&&job.Active);wait++)await Task.Delay(50);
+            var retryJob=jobs.SingleOrDefault(job=>job.Title==retryName);
+            if(retryJob?.Retry==null||retryJob.Active)throw new IOException("Failed task did not retain its retry action.");
+            retryJob.Retry();
+            for(var wait=0;wait<600&&jobs.Any(job=>job.Title==retryName&&job.Active);wait++)await Task.Delay(50);
+            if(attempts!=2||jobs.Any(job=>job.Title==retryName))throw new IOException("Task retry did not rerun the original operation and clear success.");
+            report["TaskRetry"]="failed task is retried with its original operation; successful retry removes the task";
+            var batchFolder=System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(reportPath))!,"batch-"+Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(batchFolder);var copy=System.IO.Path.Combine(batchFolder,"second"+System.IO.Path.GetExtension(input));File.Copy(input,copy);
+            EnqueueBatchExtraction([input,copy],System.IO.Path.Combine(batchFolder,"output"),false,New7z.Core.ConflictPolicy.Rename);
+            for(var wait=0;wait<600&&jobs.Any(job=>job.Active);wait++)await Task.Delay(50);
+            Root.UpdateLayout();
+            if(lastBatchResults?.Count(result=>result.State==2)!=2||lastBatchResults.Any(result=>result.State!=2)||batchSummaryText==null)throw new IOException("Batch extraction did not complete two independent tasks and retain results.");
+            report["BatchExtraction"]="two archives extract into separate folders; independent tasks finish and the per-archive summary remains visible";
             await OpenArchiveAsync(input,false);
             if(archive==null||entries.Count==0)throw new IOException("Archive UI did not load.");
             var firstDirectory=entries.FirstOrDefault(e=>e.IsDirectory);

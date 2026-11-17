@@ -88,7 +88,7 @@ public sealed partial class MainWindow:Window
                 _=Task.Run(async()=>{try{await ExplorerIcons.ApplyAsync(iconTheme,customIcons);}catch{}});
             }
             var arg=startupArchive??launchArgs.FirstOrDefault(File.Exists);if(arg!=null)await OpenArchiveAsync(arg);
-            if(settings.AutoCheckUpdates&&!AppEnvironment.IsPackaged)_=CheckForUpdatesAsync(false);
+            StartAutomaticUpdates();
         };
     }
     private static void CleanupDragCache()
@@ -178,7 +178,7 @@ public sealed partial class MainWindow:Window
     {
         var version=++homeVersion;
         var content=Stack(24);content.Children.Add(Text(T("主页","Home"),28,true));content.Children.Add(Text(T("打开压缩包，或将文件打包分享。","Open an archive, or pack files to share.")));
-        var actions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=10};actions.Children.Add(Button(T("打开压缩包","Open archive"),async(_,_)=>{var f=await PickArchiveAsync();if(f!=null)await OpenArchiveAsync(f);}));actions.Children.Add(Button(T("新建压缩","New archive"),async(_,_)=>await CreateDialogAsync(),true));content.Children.Add(actions);
+        var actions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=10};actions.Children.Add(Button(T("打开压缩包","Open archive"),async(_,_)=>{var f=await PickArchiveAsync();if(f!=null)await OpenArchiveAsync(f);}));actions.Children.Add(Button(T("新建压缩","New archive"),async(_,_)=>await CreateDialogAsync(),true));actions.Children.Add(Button(T("批量解压","Batch extract"),async(_,_)=>await BatchExtractDialogAsync()));content.Children.Add(actions);
         var drop=Stack(10);drop.Children.Add(Text(T("把文件或文件夹拖到窗口","Drop files or folders here"),22,true));drop.Children.Add(Text(T("压缩包可查看内容，普通文件可打包为 7z、ZIP 或 TAR。无需另装 7-Zip。","Open an archive to browse it, or pack files into 7z, ZIP or TAR. No separate 7-Zip needed.")));var pick=new StackPanel{Orientation=Orientation.Horizontal,Spacing=10};pick.Children.Add(Button(T("选择文件","Choose files"),async(_,_)=>{var paths=await PickFilesAsync();if(paths.Count>0)await CreateDialogAsync(paths);}));pick.Children.Add(Button(T("选择文件夹","Choose folder"),async(_,_)=>{var path=await PickFolderAsync();if(path!=null)await CreateDialogAsync([path]);}));drop.Children.Add(pick);content.Children.Add(Card(drop));
         var recent=Stack(8);recent.Children.Add(Text(T("最近使用","Recent"),18,true));
         var unavailable=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -235,7 +235,7 @@ public sealed partial class MainWindow:Window
         if(e.Handled)return;
         if(dragData!=null){e.Handled=true;return;}
         if(!e.DataView.Contains(StandardDataFormats.StorageItems))return;e.Handled=true;var deferral=e.GetDeferral();
-        try{var items=await e.DataView.GetStorageItemsAsync();var paths=items.Select(i=>i.Path).ToList();if(paths.Count==0)return;if(page=="archive"&&archive!=null){await AddSourcesAsync(paths);return;}if(paths.Count==1&&File.Exists(paths[0])&&new[]{".7z",".zip",".rar",".tar",".gz",".xz",".bz2",".iso",".001",".zst",".zstd",".tzst",".lz4"}.Contains(System.IO.Path.GetExtension(paths[0]).ToLowerInvariant()))await OpenArchiveAsync(paths[0]);else if(paths.Count>0)await CreateDialogAsync(paths);}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}finally{deferral.Complete();}
+        try{var items=await e.DataView.GetStorageItemsAsync();var paths=items.Select(i=>i.Path).ToList();if(paths.Count==0)return;if(page=="archive"&&archive!=null){await AddSourcesAsync(paths);return;}if(paths.Count>1&&paths.All(IsArchivePath)){await BatchExtractDialogAsync(paths);return;}if(paths.Count==1&&IsArchivePath(paths[0]))await OpenArchiveAsync(paths[0]);else if(paths.Count>0)await CreateDialogAsync(paths);}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}finally{deferral.Complete();}
     }
     private async Task<string?> AskPasswordAsync()
     {
@@ -511,9 +511,12 @@ public sealed partial class MainWindow:Window
     private async Task ReloadArchiveAsync()
     {
         if(archive==null)return;
+        var current=archive;var version=openVersion;var key=password;
         try
         {
-            entries=await engine.ListAsync(archive,password);
+            var refreshed=await engine.ListAsync(current,key);
+            if(current!=archive||version!=openVersion)return;
+            entries=refreshed;
             if(folder.Length>0&&!entries.Any(e=>e.NormalizedPath.StartsWith(folder+"/",StringComparison.Ordinal)))folder="";
             if(page=="archive")ShowArchive();
         }
@@ -592,14 +595,45 @@ public sealed partial class MainWindow:Window
             for(var attempt=0;attempt<3;attempt++){await Task.Delay(TimeSpan.FromMinutes(2));try{if(!Directory.Exists(path))return;Directory.Delete(path,true);return;}catch{}}
         });
     }
-    private void QueueJob(string name,string destination,Func<IProgress<EngineProgress>,CancellationToken,Task> operation,bool openTasks=true,Func<Task>? completed=null)
+    private bool QueueJob(string name,string destination,Func<IProgress<EngineProgress>,CancellationToken,Task> operation,bool openTasks=true,Func<Task>? completed=null,Action<ArchiveJob>? ended=null)
     {
-        var job=new ArchiveJob(name,destination);job.Status=T("等待中","Waiting");jobs.Insert(0,job);if(openTasks)SelectPage("tasks");
-        _=Run();async Task Run(){bool acquired=false;try{await queue.WaitAsync(job.Cancellation.Token);acquired=true;job.Status=T("正在处理","Running");var last=Stopwatch.StartNew();var progress=new Progress<EngineProgress>(p=>{if(!job.Active)return;if(p.CurrentItem is {Length:>0})job.CurrentItem=p.CurrentItem;if(last.ElapsedMilliseconds<100)return;last.Restart();if(p.Total>0)job.Percent=Math.Clamp(p.Completed*100.0/p.Total,0,100);});await operation(progress,job.Cancellation.Token);if(completed!=null){try{await completed();}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}}CompleteJob(job);Notify(T(name+" 已完成。",name+" completed."),InfoBarSeverity.Success);}catch(OperationCanceledException){job.Status=T("已取消","Cancelled");job.Active=false;}catch(Exception ex){job.Status=T("失败：","Failed: ")+ex.Message;job.Active=false;Notify(ex.Message,InfoBarSeverity.Error);}finally{if(acquired)queue.Release();StatusText.Text=jobs.Any(j=>j.CanCancel)?T("有任务正在处理或排队","Tasks are running or queued"):T("就绪","Ready");}}
+        if(installingUpdate){Notify(T("正在准备安装更新，请稍后重试。","An update is being prepared. Try again afterwards."),InfoBarSeverity.Warning);return false;}
+        IDisposable activity;
+        try{activity=ArchiveActivity.BeginTask();}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Warning);return false;}
+        var job=new ArchiveJob(name,destination);job.Status=T("等待中","Waiting");
+        job.Retry=()=>{if(!job.Active&&QueueJob(name,destination,operation,openTasks,completed,ended)){jobs.Remove(job);if(page=="tasks")ShowTasks();}};
+        jobs.Insert(0,job);if(openTasks)SelectPage("tasks");
+        _=Run();return true;
+        async Task Run()
+        {
+            var acquired=false;
+            try
+            {
+                await queue.WaitAsync(job.Cancellation.Token);acquired=true;job.Status=T("正在处理","Running");
+                var elapsed=Stopwatch.StartNew();var last=Stopwatch.StartNew();
+                var progress=new Progress<EngineProgress>(p=>
+                {
+                    if(!job.Active)return;
+                    if(last.ElapsedMilliseconds<100&&p.Completed<p.Total)return;
+                    last.Restart();job.Report(p,elapsed.Elapsed);
+                });
+                await operation(progress,job.Cancellation.Token);
+                if(completed!=null){try{await completed();}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}}
+                CompleteJob(job);Notify(T(name+" 已完成。",name+" completed."),InfoBarSeverity.Success);
+            }
+            catch(OperationCanceledException){job.Cancelled=true;job.Status=T("已取消","Cancelled");job.Active=false;}
+            catch(Exception ex){job.Status=T("失败：","Failed: ")+ex.Message;job.Active=false;Notify(ex.Message,InfoBarSeverity.Error);}
+            finally
+            {
+                activity.Dispose();if(acquired)queue.Release();
+                ended?.Invoke(job);
+                StatusText.Text=jobs.Any(j=>j.CanCancel)?T("有任务正在处理或排队","Tasks are running or queued"):T("就绪","Ready");
+            }
+        }
     }
     private void CompleteJob(ArchiveJob job)
     {
-        job.Active=false;job.Percent=100;job.Status=T("已完成","Completed");
+        job.Succeeded=true;job.Active=false;job.Percent=100;job.Status=T("已完成","Completed");
         jobs.Remove(job);UpdateTasksEmptyState();
     }
     private void UpdateTasksEmptyState()
@@ -609,16 +643,21 @@ public sealed partial class MainWindow:Window
     private void ShowTasks()
     {
         var content=Stack(18);content.Children.Add(Text(T("任务中心","Tasks"),28,true));content.Children.Add(Text(T("任务在后台排队运行，切换页面不会中断。","Tasks run in the background; switching pages does not interrupt them.")));
+        batchSummaryText=null;
+        if(lastBatchResults!=null){batchSummaryText=Text("",12);content.Children.Add(Card(new ScrollViewer{Content=batchSummaryText,MaxHeight=180}));RefreshBatchSummary();}
         var emptyCard=Card(Text(T("当前没有任务。新建压缩或解压后，可在这里查看进度；成功完成的任务会自动移除。","No current tasks. Create or extract an archive to see progress here; successful tasks are removed automatically.")));
         emptyCard.Visibility=jobs.Count==0?Visibility.Visible:Visibility.Collapsed;content.Children.Add(emptyCard);
         var views=new List<(ArchiveJob Job,Action<ArchiveJob> Handler)>();
         foreach(var job in jobs)
         {
             var card=Stack(10);card.Children.Add(Text(job.Title,16,true));card.Children.Add(Text(job.Destination,12));
-            var current=Text(job.CurrentItem,12);current.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];current.Visibility=string.IsNullOrEmpty(job.CurrentItem)?Visibility.Collapsed:Visibility.Visible;card.Children.Add(current);
+            var current=Text(job.CurrentItem,12);current.MinHeight=18;current.MaxLines=1;current.TextTrimming=TextTrimming.CharacterEllipsis;current.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];card.Children.Add(current);
             var statusLine=new Grid();var status=Text(job.Status);statusLine.Children.Add(status);var percent=Text(job.PercentText,12);percent.HorizontalAlignment=HorizontalAlignment.Right;percent.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];statusLine.Children.Add(percent);card.Children.Add(statusLine);
-            var bar=new ProgressBar{Minimum=0,Maximum=100,Value=job.Percent};card.Children.Add(bar);
+            var bar=new ProgressBar{Minimum=0,Maximum=100,Value=job.Percent,IsIndeterminate=job.Active&&job.Indeterminate};card.Children.Add(bar);
+            var transfer=Text(job.TransferText,12);transfer.MinHeight=18;card.Children.Add(transfer);
             var actions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=8};var cancel=Button(T("取消任务","Cancel task"),async(_,_)=>{var d=Dialog(T("取消任务？","Cancel this task?"),Text(T("已完成的文件将保留，当前未完成的临时文件会清理。","Completed files are kept; unfinished temporary files are cleaned up.")),T("取消任务","Cancel task"));d.DefaultButton=ContentDialogButton.Close;if(await ShowDialogAsync(d)==ContentDialogResult.Primary)job.Cancellation.Cancel();});cancel.IsEnabled=job.CanCancel;actions.Children.Add(cancel);
+            var retry=Button(T("重试","Retry"),(_,_)=>job.Retry?.Invoke());retry.IsEnabled=!job.Active&&job.Retry!=null;retry.Visibility=job.Retry==null?Visibility.Collapsed:Visibility.Visible;actions.Children.Add(retry);
+            ToolTipService.SetToolTip(retry,T("按原参数重试；同名文件按原冲突策略处理。","Retry with the original settings and conflict policy."));
             actions.Children.Add(Button(T("打开文件夹","Open folder"),(_,_)=>{var path=Directory.Exists(job.Destination)?job.Destination:System.IO.Path.GetDirectoryName(job.Destination);if(path!=null&&Directory.Exists(path)){var info=new ProcessStartInfo("explorer.exe"){UseShellExecute=false};info.ArgumentList.Add(path);Process.Start(info);}}));card.Children.Add(actions);var border=Card(card);content.Children.Add(border);
             void Refresh()
             {
@@ -629,7 +668,7 @@ public sealed partial class MainWindow:Window
                     UpdateTasksEmptyState();return;
                 }
                 status.Text=job.Status;percent.Text=job.PercentText;bar.Value=job.Percent;cancel.IsEnabled=job.CanCancel;
-                current.Text=job.CurrentItem;current.Visibility=string.IsNullOrEmpty(job.CurrentItem)?Visibility.Collapsed:Visibility.Visible;
+                current.Text=job.CurrentItem;transfer.Text=job.TransferText;bar.IsIndeterminate=job.Active&&job.Indeterminate;retry.IsEnabled=!job.Active&&job.Retry!=null;
             }
             Action<ArchiveJob> handler=_=>DispatcherQueue.TryEnqueue(Refresh);views.Add((job,handler));
         }

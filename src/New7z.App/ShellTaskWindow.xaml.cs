@@ -211,6 +211,7 @@ public sealed partial class ShellTaskWindow:Window
         bool succeeded=false;
         try
         {
+            using var activity=ArchiveActivity.BeginTask();
             var creating=request.Action.StartsWith("create");var count=creating?1:request.Paths.Length;
             for(var i=0;i<count;i++)
             {

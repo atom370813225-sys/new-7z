@@ -30,11 +30,18 @@ internal static class NativeMethods
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl)] internal static extern void NzReleaseArchiveDragData(IntPtr session);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzList(string path, string? password, out IntPtr json, ProgressCallback progress, IntPtr context);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzExtract(string path, string? password, uint index, string? output, ulong limit, out IntPtr data, out ulong size, ProgressCallback progress, IntPtr context);
+    [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzExtractChecked(string path,string? password,uint index,string? output,ulong limit,out IntPtr data,out ulong size,ProgressCallback progress,IntPtr context,string expected);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzExtractBatch(string path,string? password,
         [MarshalAs(UnmanagedType.LPArray,ArraySubType=UnmanagedType.U4,SizeParamIndex=5)] uint[] indices,
         [MarshalAs(UnmanagedType.LPArray,ArraySubType=UnmanagedType.LPWStr,SizeParamIndex=5)] string[] outputs,
         [MarshalAs(UnmanagedType.LPArray,ArraySubType=UnmanagedType.U8,SizeParamIndex=5)] ulong[] limits,uint count,
         ExtractItemCallback itemCallback,ProgressCallback progress,IntPtr context);
+    [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzExtractBatchChecked(string path,string? password,
+        [MarshalAs(UnmanagedType.LPArray,ArraySubType=UnmanagedType.U4,SizeParamIndex=5)] uint[] indices,
+        [MarshalAs(UnmanagedType.LPArray,ArraySubType=UnmanagedType.LPWStr,SizeParamIndex=5)] string[] outputs,
+        [MarshalAs(UnmanagedType.LPArray,ArraySubType=UnmanagedType.U8,SizeParamIndex=5)] ulong[] limits,uint count,
+        ExtractItemCallback itemCallback,ProgressCallback progress,IntPtr context,
+        [MarshalAs(UnmanagedType.LPArray,ArraySubType=UnmanagedType.LPWStr,SizeParamIndex=5)] string[] expected);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzTest(string path, string? password, ProgressCallback progress, IntPtr context);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzCreate(string path, int format, int level, string? method, string? password, int encryptNames,
         [MarshalAs(UnmanagedType.LPArray, ArraySubType=UnmanagedType.LPWStr,SizeParamIndex=7)] string[] paths,

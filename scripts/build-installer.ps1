@@ -20,7 +20,8 @@ $platform=if($Architecture -eq 'arm64'){'ARM64'}else{'x64'}
 New-Item -ItemType Directory -Path $release,$payload -Force | Out-Null
 Push-Location $projectRoot
 try{
- if(!(Test-Path -LiteralPath "$projectRoot/artifacts/native/$Architecture/7z.dll")){& "$PSScriptRoot/build-native.ps1" -Architecture $Architecture}
+ if(Test-Path -LiteralPath "$projectRoot/artifacts/native/$Architecture/7z.dll"){& "$PSScriptRoot/build-native.ps1" -Architecture $Architecture -SkipEngine}
+ else{& "$PSScriptRoot/build-native.ps1" -Architecture $Architecture}
  & "$PSScriptRoot/build-shell.ps1" -Architecture $Architecture
  $trim=if($Untrimmed){'false'}else{'true'}
  & dotnet publish src/New7z.App/New7z.App.csproj -c Release "-p:Platform=$platform" "-p:New7zArchitecture=$Architecture" "-p:TrimRelease=$trim" --self-contained true -o $payload

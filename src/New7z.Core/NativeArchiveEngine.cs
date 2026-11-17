@@ -35,6 +35,7 @@ internal sealed class NativeArchiveEngine
             unchecked((int)0x80040202) => new IOException(Loc.T("文件超过预览或解压大小限制。请先选择合适的输出位置解压。", "The file exceeds the preview or extraction size limit. Choose an output location and extract it first.")),
             unchecked((int)0x80040203) => new InvalidDataException(Loc.T("文件损坏、校验失败或不是受支持的压缩包。", "The file is damaged, failed verification, or is not a supported archive.")),
             unchecked((int)0x80040204) => new IOException(Loc.T("这种压缩包格式不支持修改。仅支持 7z 和 ZIP。", "This archive format cannot be modified. Only 7z and ZIP are supported.")),
+            unchecked((int)0x80040205) => new IOException(Loc.T("压缩包内容已变化，请重新打开后再操作。","The archive has changed. Reopen it before continuing.")),
             _ => new IOException(Loc.T($"文件操作失败（0x{code:X8}）：{Marshal.GetExceptionForHR(code)?.Message}", $"File operation failed (0x{code:X8}): {Marshal.GetExceptionForHR(code)?.Message}"))
         };
     }
@@ -52,7 +53,7 @@ internal sealed class NativeArchiveEngine
         cancellation.ThrowIfCancellationRequested();
         if (entry.IsDirectory || entry.IsLink) throw new IOException(Loc.T("不能预览文件夹或链接。", "Folders and links cannot be previewed."));
         var callback=Callback(cancellation,null);
-        Check(NativeMethods.NzExtract(path,password,entry.Index,null,limit,out var pointer,out var length,callback,IntPtr.Zero),cancellation);
+        Check(NativeMethods.NzExtractChecked(path,password,entry.Index,null,limit,out var pointer,out var length,callback,IntPtr.Zero,entry.NormalizedPath),cancellation);
         try { var bytes=new byte[checked((int)length)]; if(bytes.Length>0)Marshal.Copy(pointer,bytes,0,bytes.Length); return bytes; }
         finally { NativeMethods.NzFree(pointer); GC.KeepAlive(callback); }
     },cancellation);
@@ -96,23 +97,24 @@ internal sealed class NativeArchiveEngine
         }
         var rootPaths=roots.Select(entry=>outputByIndex.TryGetValue(entry.Index,out var output)?output:ResolveOutput(root,entry.NormalizedPath)).ToArray();
         ArgumentNullException.ThrowIfNull(prepare);
-        var state=GCHandle.Alloc(prepare);IntPtr session;
+        var activity=ArchiveActivity.BeginTask();var state=GCHandle.Alloc(prepare);IntPtr session;
         try
         {
             Check(NativeMethods.NzCreateArchiveDragDataIsolated(package,owner,System.IO.Path.GetFullPath(archive),password,selected.Select(e=>e.Index).ToArray(),selected.Select(e=>outputByIndex[e.Index]).ToArray(),(uint)selected.Count,rootPaths,(uint)rootPaths.Length,root,Loc.T("正在解压拖动内容","Extracting dragged items"),PrepareDrag,GCHandle.ToIntPtr(state),ReleaseDrag,out session),CancellationToken.None);
         }
-        catch{state.Free();throw;}
-        return new ArchiveDragData(session,prepare);
+        catch{state.Free();activity.Dispose();throw;}
+        return new ArchiveDragData(session,prepare,activity);
     }
 
     public sealed class ArchiveDragData:IDisposable
     {
         private IntPtr session;
         private readonly NativeMethods.DragPrepareCallback? prepare;
-        internal ArchiveDragData(IntPtr value,NativeMethods.DragPrepareCallback? prepare){session=value;this.prepare=prepare;}
+        private IDisposable? activity;
+        internal ArchiveDragData(IntPtr value,NativeMethods.DragPrepareCallback? prepare,IDisposable activity){session=value;this.prepare=prepare;this.activity=activity;}
         public void ThrowIfFailed()=>Check(NativeMethods.NzArchiveDragResult(session),CancellationToken.None);
         public bool WasTransferred=>NativeMethods.NzArchiveDragWasTransferred(session)!=0;
-        public void Dispose(){var value=Interlocked.Exchange(ref session,IntPtr.Zero);if(value!=IntPtr.Zero)NativeMethods.NzReleaseArchiveDragData(value);GC.KeepAlive(prepare);GC.SuppressFinalize(this);}
+        public void Dispose(){var value=Interlocked.Exchange(ref session,IntPtr.Zero);if(value!=IntPtr.Zero)NativeMethods.NzReleaseArchiveDragData(value);Interlocked.Exchange(ref activity,null)?.Dispose();GC.KeepAlive(prepare);GC.SuppressFinalize(this);}
         ~ArchiveDragData()=>Dispose();
     }
 
@@ -223,7 +225,7 @@ internal sealed class NativeArchiveEngine
         foreach(var item in plans.Where(p=>p.Entry.IsDirectory)){cancellation.ThrowIfCancellationRequested();EnsureNoReparse(item.Target);Directory.CreateDirectory(item.Target);}
         var files=plans.Where(p=>!p.Entry.IsDirectory).ToArray();
         var byIndex=files.ToDictionary(p=>p.Entry.Index);
-        var completed=0;var skipped=0;var totalFiles=(ulong)files.Length;
+        var completed=0;var skipped=0;var totalFiles=(ulong)files.Length;ulong byteTotal=0,byteDone=0;var extracting=false;
         var drive=new DriveInfo(System.IO.Path.GetPathRoot(root)!);var availableSpace=(ulong)drive.AvailableFreeSpace;
         string? activeTemp=null,currentItem=null;string currentTarget="";
         ExceptionDispatchInfo? callbackError=null;long lastReport=0;
@@ -232,13 +234,17 @@ internal sealed class NativeArchiveEngine
             if(progress==null)return;
             var now=Stopwatch.GetTimestamp();
             if(!force&&lastReport!=0&&now-lastReport<Stopwatch.Frequency/20)return;
-            lastReport=now;progress.Report(new(totalFiles,(ulong)(completed+skipped),currentItem));
+            lastReport=now;var total=byteTotal>0?byteTotal:totalFiles;
+            var done=force?total:byteTotal>0?Math.Min(byteDone,total):(ulong)(completed+skipped);
+            progress.Report(new(total,done,currentItem,byteTotal>0));
         }
         NativeMethods.ExtractItemCallback itemCallback=(index,stage,_)=>
         {
             try
             {
-                cancellation.ThrowIfCancellationRequested();var item=byIndex[index];var entry=item.Entry;
+                cancellation.ThrowIfCancellationRequested();
+                if(stage==2){extracting=true;byteTotal=0;byteDone=0;return 0;}
+                var item=byIndex[index];var entry=item.Entry;
                 if(stage==0)
                 {
                     currentItem=entry.Path;currentTarget=item.Target;EnsureNoReparse(currentTarget);ReportProgress();
@@ -266,14 +272,14 @@ internal sealed class NativeArchiveEngine
             }
             catch(Exception ex){callbackError=ExceptionDispatchInfo.Capture(ex);return unchecked((int)0x80004004);}
         };
-        NativeMethods.ProgressCallback callback=(_,_,_)=>
+        NativeMethods.ProgressCallback callback=(total,done,_)=>
         {
             if(cancellation.IsCancellationRequested)return 1;
-            try{ReportProgress();return 0;}catch(Exception ex){callbackError=ExceptionDispatchInfo.Capture(ex);return 1;}
+            try{if(!extracting)return 0;if(total>0){if(byteTotal!=total){byteTotal=total;byteDone=0;}byteDone=Math.Max(byteDone,done);}ReportProgress();return 0;}catch(Exception ex){callbackError=ExceptionDispatchInfo.Capture(ex);return 1;}
         };
         try
         {
-            var code=NativeMethods.NzExtractBatch(archive,password,files.Select(p=>p.Entry.Index).ToArray(),files.Select(p=>p.Temp).ToArray(),files.Select(p=>Math.Max(p.Entry.Size,1)).ToArray(),(uint)files.Length,itemCallback,callback,IntPtr.Zero);
+            var code=NativeMethods.NzExtractBatchChecked(archive,password,files.Select(p=>p.Entry.Index).ToArray(),files.Select(p=>p.Temp).ToArray(),files.Select(p=>Math.Max(p.Entry.Size,1)).ToArray(),(uint)files.Length,itemCallback,callback,IntPtr.Zero,files.Select(p=>p.Entry.NormalizedPath).ToArray());
             callbackError?.Throw();Check(code,cancellation);cancellation.ThrowIfCancellationRequested();
             ReportProgress(true);return new ExtractionResult(completed,skipped);
         }

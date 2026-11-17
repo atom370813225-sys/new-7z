@@ -11,4 +11,6 @@ try {
  if($LASTEXITCODE){throw 'Engine integration tests failed.'}
  & dotnet run --project tests/New7z.Icon.Tests -c Release --arch $Architecture
  if($LASTEXITCODE){throw 'Explorer icon integration tests failed.'}
+ & dotnet run --project tests/New7z.Settings.Tests -c Release "-p:New7zArchitecture=$Architecture" "-p:Platform=$platform"
+ if($LASTEXITCODE){throw 'Settings and update integration tests failed.'}
 }finally{$env:NEW7Z_TEST_ARCHITECTURE=$previousArchitecture;Pop-Location}

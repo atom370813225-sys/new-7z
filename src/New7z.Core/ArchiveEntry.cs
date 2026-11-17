@@ -55,5 +55,5 @@ public static class ByteSize
         _ => $"{value} B"
     };
 }
-public sealed record EngineProgress(ulong Total, ulong Completed, string? CurrentItem=null);
+public sealed record EngineProgress(ulong Total, ulong Completed, string? CurrentItem=null,bool IsByteProgress=true);
 public sealed class ArchivePasswordException() : Exception(Loc.T("压缩包需要密码，或密码不正确。请重新输入。", "The archive requires a password, or the password is incorrect. Please enter it again."));

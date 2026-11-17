@@ -36,6 +36,7 @@ public sealed class ArchiveEngine
     internal static async Task<EngineMessage> RunAsync(EngineRequest request,IProgress<EngineProgress>? progress,CancellationToken cancellation)
     {
         cancellation.ThrowIfCancellationRequested();
+        using var activity=ArchiveActivity.BeginTask();
         if((request.Action is "list" or "read" or "test" or "extract")&&request.Path.EndsWith(".001",StringComparison.OrdinalIgnoreCase))await Task.Run(()=>ArchiveVolumes.ValidateInput(request.Path),cancellation).ConfigureAwait(false);
         var host=Path.Combine(AppContext.BaseDirectory,"New7z.EngineHost.exe");
         if(!File.Exists(host))throw new FileNotFoundException(Loc.T("解压引擎进程缺失，请修复安装。","The archive worker is missing. Repair the installation."),host);

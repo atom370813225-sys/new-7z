@@ -85,6 +85,15 @@ function Uninstall {
  }
 }
 try{
+ $activityFolder=Join-Path $env:LOCALAPPDATA 'New7z';New-Item -ItemType Directory -Path $activityFolder -Force | Out-Null
+ $activityPath=Join-Path $activityFolder 'activity.lock'
+ $activity=[IO.FileStream]::new($activityPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+ try{
+  $blocked=Start-Process -FilePath $SetupPath -ArgumentList ('/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="'+$install+'" /LOG="'+(Join-Path $fixture 'blocked-install.log')+'"') -WindowStyle Hidden -PassThru
+  if(!$blocked.WaitForExit(60000)){throw 'Blocked installer timed out.'}
+  Check ($blocked.ExitCode -ne 0) 'installer refuses to interrupt an active task'
+  Check (!(Test-Path -LiteralPath "$install/Versions")) 'blocked installation leaves runtime files untouched'
+ }finally{$activity.Dispose()}
  # The test owns a temporary registry namespace after taking restorable snapshots.
  # Otherwise a foreign legacy ProgID correctly survives our scoped uninstall.
  foreach($path in $ownKeys){$registry.DeleteSubKeyTree($path,$false)}
@@ -173,6 +182,12 @@ try{
  Check ($state.MenuMode -eq 'classic') 'compatible-only install works without modern package'
  Check ((Get-ItemPropertyValue -LiteralPath $uninstallRegistry -Name DisplayVersion) -eq $manifest.Version) 'upgrade retains one test uninstall registration'
  Check (((Get-ItemProperty -LiteralPath 'HKCU:/Software/New7z/Explorer' -Name Language -ErrorAction SilentlyContinue).Language) -eq $menuLanguage) 'upgrade preserves Explorer menu language'
+ $activity=[IO.FileStream]::new($activityPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+ try{
+  $blocked=Start-Process -FilePath (Join-Path $install 'Uninstall/unins000.exe') -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -WindowStyle Hidden -PassThru
+  if(!$blocked.WaitForExit(60000)){throw 'Blocked uninstaller timed out.'}
+  Check ($blocked.ExitCode -ne 0 -and (Test-Path -LiteralPath "$runtime/New7z.App.exe")) 'uninstaller refuses to interrupt an active task'
+ }finally{$activity.Dispose()}
  Uninstall
  Check (!(Test-Path -LiteralPath $uninstallRegistry)) 'uninstall removes only test product registration'
  foreach($path in @('HKCU:/Software/Classes/*/shell/New7z','HKCU:/Software/Classes/Directory/shell/New7z','HKCU:/Software/Classes/New7z.Archive','HKCU:/Software/New7z/Capabilities')){Check (!(Test-Path -LiteralPath $path)) "uninstall removes $path"}

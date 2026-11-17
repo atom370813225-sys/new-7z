@@ -29,6 +29,8 @@
 
 | Capability | Canonical owner | Source of truth | Allowed variants | Verification |
 |---|---|---|---|---|
+| Native Batch Extraction | MainWindow.BatchExtraction / QueueJob | 当前用户要求 / DESIGN.md | 主页与多包拖入；最多 200 包；逐包密码、独立任务及最近一批结果；失败/取消按原参数重试 | --verify-ui BatchExtraction / TaskRetry |
+| Native Transfer Progress | NativeArchiveEngine / TransferTracker / ArchiveJob | DESIGN.md | 提取字节进度、速度与剩余时间；计数进度不展示字节速度；卡片行高稳定 | StaleEntryTests / New7z.Settings.Tests |
 | Native Task Retention | MainWindow.CompleteJob / SharedTaskStore | 当前用户要求 / 本文件 | 成功后自动移除、不保留历史；失败与取消保留；读取时清理旧成功快照 | New7z.TaskStore.Tests / --verify-ui Tasks |
 | Native Split Volumes | VolumeSizeField / ArchiveVolumes / ArchiveEngine | 本文件 / DESIGN.md | 主窗口与 Shell 压缩表单共享预设、自定义与校验；7z/ZIP/TAR；默认不分卷；MiB/GiB 为二进制；自定义至少 1 MiB | VolumeTests / --verify-ui Volumes / test-icons.ps1 |
 | Native Archive Properties | MainWindow.ArchiveView.CreateArchivePropertiesPanel | 本文件 / DESIGN.md | 右侧常显整包统计；独立纵向滚动；ListView 纵向与表格横向滚动 | --verify-ui：选择/目录/搜索统计不变、真实包大小、无属性按钮、900 DIP 布局 |
@@ -49,7 +51,7 @@
 | Windows Integration | MainWindow.Integration / installer/Integrate-Shell.ps1 | docs/安装包发布.md | 注册修复按钮；Windows 默认应用选择器由系统拥有 | test-installer.ps1 / published UI diagnostic |
 | Archive Editing | MainWindow.ShowArchive / ArchiveEngine.ModifyAsync | 本文件 | 仅 7z/ZIP 添加、删除与同名替换；临时文件成功后替换原包 | tests/New7z.Integration |
 | Drag Extraction | MainWindow.FileListDragItemsStarting / ArchiveEngine.CreateDragData / native DragDataObject | 本文件 | WinUI 负责手势、选择与鼠标反馈；IDataObjectProvider 接入原生延迟数据；按住鼠标悬停不解压，释放后准备真实 CF_HDROP 条目，由系统复制/移动临时文件；准备阶段显示可取消进度 | test-drag-extraction.ps1 / --verify-drag-ui / 真实鼠标验证 / 临时目录清理 |
-| App Update | MainWindow.Updates / GitHubUpdateChecker | docs/安装包发布.md | 启动自动检查、手动检查、SHA-256 校验、确认后安装 | 真实 GitHub API 探针 / 发布版 `--verify-ui` |
+| App Update | MainWindow.Updates / UpdateChecker / UserSettings / ArchiveActivity | docs/安装包发布.md | 启动及运行时按间隔检查；默认每天；多窗口共享时间；手动立即；超时回退；SHA-256 校验、确认后安装；任务期间拒绝安装卸载 | New7z.Settings.Tests / --verify-ui UpdateInterval / test-installer.ps1 |
 
 Date 不适用：只读示例日期，无日期输入控件。引擎 API、登录、远程请求、真实磁盘修改本轮不适用。
 

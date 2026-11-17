@@ -80,6 +80,8 @@ Explorer 任务采用独立 `ShellTaskWindow`，任务窗口目标大小 600 × 
 
 ## Components
 
+2026-11-17 批量与更新：主页「批量解压」和拖入多个归档共用 `MainWindow.BatchExtraction`，原生多选文件器一次最多 200 包；目标、智能解压和冲突策略沿用现有解压表单。长路径列表及结果内部滚动，每包独立排队、失败和取消可按原参数重试，最近一批保留逐包结果。替换文件须二次确认；加密包处理时询问密码，不持久保存。任务中心由 `QueueJob` / `ArchiveJob` 维护卡片，当前文件及速度行预留高度；真实字节进度由 `TransferTracker` 估算速度和剩余时间，只有文件计数时不显示字节速度。更新设置仍由 `MainWindow.Updates` 拥有：原生 ToggleSwitch 与 ComboBox 即时保存，失败回退并在共享 InfoBar 解释；间隔默认每天，可选 15 分钟、1 小时、6 小时或每周，多窗口共用 UTC 检查时间，手动检查立即执行。设置写入合并各窗口修改，安装和卸载须等待所有新版本任务释放共享活动锁。沿用 WinUI ThemeResource、共享 Button/Card/Dialog，不增加视觉 token。原生诊断验证控件与执行流程，不能替代桌面人工视觉、键盘和真机验收。
+
 2026-11-16 单格式图标：独立安装版的格式 PNG 替换与恢复默认同时同步到 New7z 的 Explorer 关联图标，自定义优先于当前主题；主题切换、启动和关联修复沿用同一解析流程。原生设置卡片处理时禁用以防重复提交，保存失败恢复原值，同步失败通过共享 InfoBar 说明应用内已保存及修复入口。默认程序仍由 Windows 设置确认；Store 版说明系统图标由包提供。沿用现有 Button、ComboBox、32 DIP 预览及系统主题资源，不增加视觉 token。
 
 2026-11-16 分卷压缩：主窗口与 Explorer 配置窗口复用 `VolumeSizeField`，使用原生 ComboBox、TextBox 和主题样式。默认「不分卷」，提供 10/100/500 MiB、1/2/4 GiB 及自定义；自定义输入出现于选中「自定义」之后，错误保留草稿并聚焦输入。7z/ZIP/TAR 可用，Zstandard/LZ4 禁用并解释范围。沿用现有滚动表单与固定底部操作，不增加颜色或字体 token。任务栏继续使用透明蓝色拉链；Store 与安装版 Shell 身份包补齐 targetsize 的 unplated/lightunplated 资源及 PRI，避免 Windows 自动绘制彩色底板。

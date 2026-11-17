@@ -1,5 +1,5 @@
 #ifndef AppVersion
- #define AppVersion "1.0.10"
+ #define AppVersion "1.0.11"
 #endif
 #ifndef BuildId
  #error BuildId is required
@@ -93,6 +93,51 @@ const
 
 function MoveFileExW(lpExistingFileName, lpNewFileName: String; dwFlags: Cardinal): Boolean;
   external 'MoveFileExW@kernel32.dll stdcall';
+
+function CreateFileW(FileName: String; Access, Share, Security, Creation, Flags, Template: LongWord): THandle;
+  external 'CreateFileW@kernel32.dll stdcall';
+function CloseHandle(Handle: THandle): Boolean;
+  external 'CloseHandle@kernel32.dll stdcall';
+var ActivityHandle: THandle;
+
+function AcquireActivity: Boolean;
+var Folder: String;
+begin
+  if (ActivityHandle <> 0) and (ActivityHandle <> THandle(-1)) then begin Result := True; exit; end;
+  Folder := ExpandConstant('{localappdata}\New7z');
+  if not ForceDirectories(Folder) then begin Result := False; exit; end;
+  ActivityHandle := CreateFileW(Folder + '\activity.lock', $C0000000, 0, 0, 4, $80, 0);
+  Result := ActivityHandle <> THandle(-1);
+  if not Result then ActivityHandle := 0;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if not AcquireActivity then begin
+    if ActiveLanguage = 'chinesesimp' then Result := 'New7z 任务正在运行，请完成或取消任务后再安装。'
+    else Result := 'New7z tasks are running. Finish or cancel them, then retry installation.';
+  end;
+end;
+
+procedure DeinitializeSetup;
+begin
+  if ActivityHandle <> 0 then begin CloseHandle(ActivityHandle); ActivityHandle := 0; end;
+end;
+
+function InitializeUninstall: Boolean;
+begin
+  Result := AcquireActivity;
+  if not Result then begin
+    if ActiveLanguage = 'chinesesimp' then SuppressibleMsgBox('New7z 任务正在运行，请完成或取消任务后再卸载。', mbError, MB_OK, IDOK)
+    else SuppressibleMsgBox('New7z tasks are running. Finish or cancel them before uninstalling.', mbError, MB_OK, IDOK);
+  end;
+end;
+
+procedure DeinitializeUninstall;
+begin
+  if ActivityHandle <> 0 then begin CloseHandle(ActivityHandle); ActivityHandle := 0; end;
+end;
 
 procedure ScheduleDelete(const FileName: String);
 begin

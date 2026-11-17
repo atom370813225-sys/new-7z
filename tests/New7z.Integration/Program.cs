@@ -14,12 +14,14 @@ try
 {
     if(Environment.GetEnvironmentVariable("NEW7Z_TEST_ARCHITECTURE") is {Length:>0} requestedArchitecture)
         Assert(RuntimeInformation.ProcessArchitecture.ToString().Equals(requestedArchitecture,StringComparison.OrdinalIgnoreCase),"integration tests run in the requested native process architecture");
+    if(args.Contains("--stale-only")){await StaleEntryTests.RunAsync(root,checks);Console.WriteLine("PASS stale entry checks: "+checks.Count);return;}
     if(args.Contains("--volumes-only"))
     {
         await File.WriteAllBytesAsync(Path.Combine(root,"empty.txt"),[]);
         await VolumeTests.RunAsync(root,checks);
         Console.WriteLine("PASS volume checks: "+checks.Count);return;
     }
+    await StaleEntryTests.RunAsync(root,checks);
     var preferencesKey=@"Software\New7z.Tests\"+Guid.NewGuid().ToString("N");
     try
     {

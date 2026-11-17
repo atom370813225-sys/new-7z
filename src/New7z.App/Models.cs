@@ -30,25 +30,30 @@ public sealed class ArchiveJob(string title,string destination)
     public bool Active {get=>active;set{active=value;Changed();}}
     public bool CanCancel=>active&&cancelable;
     public bool Cancelable {get=>cancelable;set{cancelable=value;Changed();}}
+    public Action? Retry {get;set;}
+    public bool Succeeded {get;set;}
+    public bool Cancelled {get;set;}
+    public bool Indeterminate {get;private set;}=true;
+    private readonly TransferTracker transfer=new();
+    public string TransferText
+    {
+        get
+        {
+            if(transfer.BytesPerSecond<=0)return "";
+            var speed=ByteSize.Format((ulong)transfer.BytesPerSecond)+"/s";
+            if(transfer.Remaining is not { } remaining)return speed;
+            return speed+Loc.T(" · 剩余 "," · remaining ")+$"{(int)remaining.TotalHours:00}:{remaining.Minutes:00}:{remaining.Seconds:00}";
+        }
+    }
+    public void Report(EngineProgress progress,TimeSpan elapsed)
+    {
+        if(progress.CurrentItem is {Length:>0})currentItem=progress.CurrentItem;
+        Indeterminate=progress.Total==0;
+        if(progress.Total>0)percent=Math.Clamp(progress.Completed*100.0/progress.Total,0,100);
+        transfer.Update(progress,elapsed);Changed();
+    }
     public event Action<ArchiveJob>? Updated;
     private void Changed()=>Updated?.Invoke(this);
-}
-public sealed class UserSettings
-{
-    public string Theme {get;set;}="system";
-    public string Language {get;set;}="system";
-    public string? IconPath {get;set;}
-    public string FormatIconTheme {get;set;}="default";
-    public string DefaultFormat {get;set;}="7z";
-    public string Default7zMethod {get;set;}="LZMA2";
-    public string DefaultZipMethod {get;set;}="Deflate";
-    public Dictionary<string,string> FormatIcons {get;set;}=[];
-    public bool AutoCheckUpdates {get;set;}=true;
-    public List<string> Recent {get;set;}=[];
-    public static string Folder=>System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"New7z");
-    public static string NormalizeFormat(string? value)=>value?.ToLowerInvariant() switch{"zip"=>"zip","tar"=>"tar","zst"=>"zst","lz4"=>"lz4",_=>"7z"};
-    public static UserSettings Load(){try{var loaded=System.Text.Json.JsonSerializer.Deserialize(File.ReadAllText(System.IO.Path.Combine(Folder,"settings.json")),AppJsonContext.Default.UserSettings)??new();loaded.FormatIcons??=[];loaded.FormatIconTheme=loaded.FormatIconTheme=="animals"?"animals":"default";loaded.DefaultFormat=NormalizeFormat(loaded.DefaultFormat);loaded.Default7zMethod=CompressionMethods.Normalize("7z",loaded.Default7zMethod)??CompressionMethods.Default("7z");loaded.DefaultZipMethod=CompressionMethods.Normalize("zip",loaded.DefaultZipMethod)??CompressionMethods.Default("zip");return loaded;}catch{return new();}}
-    public void Save(){Directory.CreateDirectory(Folder);var target=System.IO.Path.Combine(Folder,"settings.json");var temp=target+".tmp";File.WriteAllText(temp,System.Text.Json.JsonSerializer.Serialize(this,AppJsonContext.Default.UserSettings));File.Move(temp,target,true);}
 }
 public sealed record CompressionChoice(string Value,string Display){public override string ToString()=>Display;}
 public static class CompressionOptions

@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><RuntimeIdentifier>$(New7zRuntimeIdentifier)</RuntimeIdentifier><SelfContained>true</SelfContained><PlatformTarget>$(New7zArchitecture)</PlatformTarget></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/New7z.App/UserSettings.cs" Link="UserSettings.cs" />
+    <ProjectReference Include="../../src/New7z.Core/New7z.Core.csproj" />
+  </ItemGroup>
+</Project>
