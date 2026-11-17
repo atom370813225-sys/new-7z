@@ -1,6 +1,7 @@
 param(
   [switch]$SkipNative,
-  [switch]$RequireStoreIdentity
+  [switch]$RequireStoreIdentity,
+  [ValidateSet('x64','arm64')][string]$Architecture='x64'
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot -Parent
@@ -11,14 +12,15 @@ Push-Location $projectRoot
 $originalManifest=$null
 try
 {
-  if(!$SkipNative){& "$PSScriptRoot/build-native.ps1"}
-  & "$PSScriptRoot/build-shell.ps1"
+  if(!$SkipNative){& "$PSScriptRoot/build-native.ps1" -Architecture $Architecture}
+  & "$PSScriptRoot/build-shell.ps1" -Architecture $Architecture
   & "$PSScriptRoot/make-store-assets.ps1"
 
   $version=(Select-Xml -Path 'Directory.Build.props' -XPath '/Project/PropertyGroup/Version').Node.InnerText.Trim()
   if(!$version){throw 'Version is missing from Directory.Build.props.'}
   $originalManifest=Get-Content -LiteralPath $manifestPath -Raw
   $stamped=[regex]::Replace($originalManifest,'(<Identity[^>]*?Version=")[0-9.]+(")','${1}'+$version+'.0${2}')
+  $stamped=$stamped.Replace('ProcessorArchitecture="x64"',('ProcessorArchitecture="'+$Architecture+'"'))
   Set-Content -LiteralPath $manifestPath -Value $stamped -Encoding utf8NoBOM
 
   if($RequireStoreIdentity)
@@ -29,7 +31,8 @@ try
     }
   }
 
-  & dotnet publish 'src/New7z.App/New7z.App.csproj' -c Release -p:Platform=x64 -p:StorePackage=true -p:TrimRelease=false --self-contained true
+  $platform=if($Architecture -eq 'arm64'){'ARM64'}else{'x64'}
+  & dotnet publish 'src/New7z.App/New7z.App.csproj' -c Release "-p:Platform=$platform" "-p:New7zArchitecture=$Architecture" -p:StorePackage=true -p:TrimRelease=false --self-contained true
   if($LASTEXITCODE){throw 'MSIX publish failed.'}
 
   $msix=Get-ChildItem -LiteralPath 'artifacts/msix' -Filter '*.msix' -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1

@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using New7z.Core;
+using System.Runtime.InteropServices;
 
 [assembly:System.Runtime.Versioning.SupportedOSPlatform("windows")]
 
@@ -11,6 +12,8 @@ var checks=new List<string>();
 void Assert(bool condition,string name){if(!condition)throw new Exception(name);checks.Add(name);}
 try
 {
+    if(Environment.GetEnvironmentVariable("NEW7Z_TEST_ARCHITECTURE") is {Length:>0} requestedArchitecture)
+        Assert(RuntimeInformation.ProcessArchitecture.ToString().Equals(requestedArchitecture,StringComparison.OrdinalIgnoreCase),"integration tests run in the requested native process architecture");
     if(args.Contains("--volumes-only"))
     {
         await File.WriteAllBytesAsync(Path.Combine(root,"empty.txt"),[]);
@@ -256,21 +259,33 @@ try
     Assert(UpdateChecker.TryParseTag("v0.1.16",out var releaseVersion)&&releaseVersion==new Version(0,1,16),"update release tag parses");
     Assert(!UpdateChecker.TryParseTag("nightly",out _),"update release tag rejects non-version tags");
     var giteeRelease="{\"tag_name\":\"v9.9.9\",\"prerelease\":false,\"body\":\"notes\",\"assets\":[{\"name\":\"New7z-9.9.9-x64-Setup.exe\",\"browser_download_url\":\"https://gitee.com/wgliangzero/new-7z/releases/download/v9.9.9/New7z-9.9.9-x64-Setup.exe\"},{\"name\":\"SHA256SUMS.txt\",\"browser_download_url\":\"https://gitee.com/wgliangzero/new-7z/releases/download/v9.9.9/SHA256SUMS.txt\"}]}";
-    var gitee=UpdateChecker.ParseGiteeRelease(giteeRelease,new Version(1,0,0));
+    var gitee=UpdateChecker.ParseGiteeRelease(giteeRelease,new Version(1,0,0),architecture:Architecture.X64);
     Assert(gitee!=null&&gitee.Version==new Version(9,9,9)&&gitee.InstallerName=="New7z-9.9.9-x64-Setup.exe"&&gitee.ChecksumsUrl!.EndsWith("/SHA256SUMS.txt"),"gitee release parses uploaded assets");
-    var giteeSourceOnly=UpdateChecker.ParseGiteeRelease("{\"tag_name\":\"v9.9.9\",\"prerelease\":false,\"assets\":[{\"name\":\"v9.9.9.zip\",\"browser_download_url\":\"https://gitee.com/wgliangzero/new-7z/archive/refs/tags/v9.9.9.zip\"}]}",new Version(1,0,0));
+    var giteeSourceOnly=UpdateChecker.ParseGiteeRelease("{\"tag_name\":\"v9.9.9\",\"prerelease\":false,\"assets\":[{\"name\":\"v9.9.9.zip\",\"browser_download_url\":\"https://gitee.com/wgliangzero/new-7z/archive/refs/tags/v9.9.9.zip\"}]}",new Version(1,0,0),architecture:Architecture.X64);
     Assert(giteeSourceOnly!=null&&giteeSourceOnly.InstallerUrl=="https://gitee.com/wgliangzero/new-7z/releases/download/v9.9.9/New7z-9.9.9-x64-Setup.exe","gitee source-only assets use the download path");
-    Assert(UpdateChecker.ParseGiteeRelease("{\"tag_name\":\"v9.9.9\",\"prerelease\":true}",new Version(1,0,0))==null,"gitee prerelease is ignored");
-    Assert(UpdateChecker.ParseGiteeRelease("{\"tag_name\":\"v1.0.0\"}",new Version(1,0,0))==null,"gitee release older than current is ignored");
-    var giteeList=UpdateChecker.ParseGiteeReleases("["+giteeRelease+",{\"tag_name\":\"v9.9.8\",\"prerelease\":false,\"assets\":[]}]",new Version(1,0,0));
+    Assert(UpdateChecker.ParseGiteeRelease("{\"tag_name\":\"v9.9.9\",\"prerelease\":true}",new Version(1,0,0),architecture:Architecture.X64)==null,"gitee prerelease is ignored");
+    Assert(UpdateChecker.ParseGiteeRelease("{\"tag_name\":\"v1.0.0\"}",new Version(1,0,0),architecture:Architecture.X64)==null,"gitee release older than current is ignored");
+    var giteeList=UpdateChecker.ParseGiteeReleases("["+giteeRelease+",{\"tag_name\":\"v9.9.8\",\"prerelease\":false,\"assets\":[]}]",new Version(1,0,0),architecture:Architecture.X64);
     Assert(giteeList!=null&&giteeList.Version==new Version(9,9,9),"gitee release list picks the highest version, not the newest release");
     var dualChannelRelease="{\"tag_name\":\"v9.9.9\",\"prerelease\":false,\"assets\":[{\"name\":\"New7z-9.9.9-win10-x64-Setup.exe\",\"browser_download_url\":\"https://gitee.com/wgliangzero/new-7z/releases/download/v9.9.9/New7z-9.9.9-win10-x64-Setup.exe\"},{\"name\":\"New7z-9.9.9-x64-Setup.exe\",\"browser_download_url\":\"https://gitee.com/wgliangzero/new-7z/releases/download/v9.9.9/New7z-9.9.9-x64-Setup.exe\"},{\"name\":\"SHA256SUMS.txt\",\"browser_download_url\":\"https://gitee.com/wgliangzero/new-7z/releases/download/v9.9.9/SHA256SUMS.txt\"}]}";
-    var win10Update=UpdateChecker.ParseGiteeRelease(dualChannelRelease,new Version(1,0,0),win10:true);
+    var win10Update=UpdateChecker.ParseGiteeRelease(dualChannelRelease,new Version(1,0,0),win10:true,architecture:Architecture.X64);
     Assert(win10Update!=null&&win10Update.InstallerName=="New7z-9.9.9-win10-x64-Setup.exe"&&win10Update.InstallerUrl.Contains("win10"),"windows 10 update selects the win10 installer");
-    var win11Update=UpdateChecker.ParseGiteeRelease(dualChannelRelease,new Version(1,0,0),win10:false);
+    var win11Update=UpdateChecker.ParseGiteeRelease(dualChannelRelease,new Version(1,0,0),win10:false,architecture:Architecture.X64);
     Assert(win11Update!=null&&win11Update.InstallerName=="New7z-9.9.9-x64-Setup.exe","windows 11 update ignores the win10 installer");
-    var win10SourceOnly=UpdateChecker.ParseGiteeRelease("{\"tag_name\":\"v9.9.9\",\"prerelease\":false,\"assets\":[]}",new Version(1,0,0),win10:true);
+    var win10SourceOnly=UpdateChecker.ParseGiteeRelease("{\"tag_name\":\"v9.9.9\",\"prerelease\":false,\"assets\":[]}",new Version(1,0,0),win10:true,architecture:Architecture.X64);
     Assert(win10SourceOnly!=null&&win10SourceOnly.InstallerUrl.EndsWith("/New7z-9.9.9-win10-x64-Setup.exe"),"windows 10 update falls back to the win10 download path");
+    var mixedArchitectureRelease=dualChannelRelease.Replace("\"assets\":[","\"assets\":[{\"name\":\"New7z-9.9.9-arm64-Setup.exe\",\"browser_download_url\":\"https://example.com/New7z-9.9.9-arm64-Setup.exe\"},");
+    foreach(var parse in new Func<string,Version,bool?,Architecture?,UpdateInfo?>[]{UpdateChecker.ParseGiteeRelease,UpdateChecker.ParseGitHubRelease})
+    {
+        var arm= parse(mixedArchitectureRelease,new Version(1,0,0),false,Architecture.Arm64);
+        Assert(arm?.InstallerName=="New7z-9.9.9-arm64-Setup.exe",parse.Method.Name+" selects native ARM64 from mixed assets");
+        Assert(parse(mixedArchitectureRelease,new Version(1,0,0),false,Architecture.X64)?.InstallerName=="New7z-9.9.9-x64-Setup.exe",parse.Method.Name+" x64 ignores the ARM64 asset");
+        Assert(parse(mixedArchitectureRelease,new Version(1,0,0),true,Architecture.X64)?.InstallerName=="New7z-9.9.9-win10-x64-Setup.exe",parse.Method.Name+" keeps the Windows 10 x64 channel");
+        Assert(parse(dualChannelRelease,new Version(1,0,0),false,Architecture.Arm64)==null,parse.Method.Name+" never substitutes x64 when ARM64 is absent");
+        Assert(parse(mixedArchitectureRelease,new Version(1,0,0),true,Architecture.Arm64)==null,parse.Method.Name+" does not offer Windows 11 ARM64 on Windows 10");
+    }
+    var armSourceOnly=UpdateChecker.ParseGiteeRelease("{\"tag_name\":\"v9.9.9\",\"assets\":[]}",new Version(1,0,0),false,Architecture.Arm64);
+    Assert(armSourceOnly?.InstallerName=="New7z-9.9.9-arm64-Setup.exe","Gitee hidden-attachment fallback preserves ARM64 architecture");
     foreach(var unsafePath in new[]{"../escape.txt","/absolute.txt","C:\\escape.txt","file.txt:ads","CON.txt","trailing. "})
     {try{ArchiveEngine.ResolveOutput(root,unsafePath);throw new Exception("Unsafe path accepted: "+unsafePath);}catch(IOException){checks.Add("reject "+unsafePath);}}
     var malicious=Path.Combine(root,"malicious.zip");using(var zip=ZipFile.Open(malicious,ZipArchiveMode.Create))

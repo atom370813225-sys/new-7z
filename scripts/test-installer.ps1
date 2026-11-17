@@ -1,9 +1,12 @@
-param([string]$PayloadDirectory,[string]$IsccPath)
+param([string]$PayloadDirectory,[string]$IsccPath,[ValidateSet('x64','arm64')][string]$Architecture='x64')
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot -Parent
-if(!$PayloadDirectory){$PayloadDirectory=(Get-Content "$projectRoot/artifacts/latest-installer-payload.txt" -Raw).Trim()}
+$pointer=if($Architecture -eq 'x64'){'latest-installer-payload.txt'}else{"latest-installer-payload-$Architecture.txt"}
+if(!$PayloadDirectory){$PayloadDirectory=(Get-Content "$projectRoot/artifacts/$pointer" -Raw).Trim()}
 if(!$IsccPath){$IsccPath="$projectRoot/artifacts/tools/InnoSetup/ISCC.exe"}
-$manifest=Get-Content "$projectRoot/artifacts/releases/release-manifest.json" -Raw | ConvertFrom-Json
+$releaseDirectory=if($Architecture -eq 'x64'){"$projectRoot/artifacts/releases"}else{"$projectRoot/artifacts/releases/$Architecture"}
+$manifest=Get-Content "$releaseDirectory/release-manifest.json" -Raw | ConvertFrom-Json
+if($manifest.Architecture -ne $Architecture){throw 'Installer test architecture does not match the payload.'}
 $fixture=Join-Path $projectRoot ('artifacts/install-test-'+[guid]::NewGuid().ToString('N'))
 $install=Join-Path $fixture '中文 安装目录'
 $testId='{6869BFEF-78AC-4D2E-9420-316BCBCBE318}'
@@ -11,7 +14,7 @@ $uninstallRegistry="HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/${
 if(Test-Path -LiteralPath $uninstallRegistry){throw 'A previous test installation exists; refusing to overwrite it.'}
 New-Item -ItemType Directory -Path $fixture -Force | Out-Null
 # A distinct product ID protects the user's actual New7z uninstall registration.
-& $IsccPath /Q "/DAppVersion=$($manifest.Version)" "/DBuildId=$($manifest.BuildId)" "/DPayloadDir=$PayloadDirectory" "/DReleaseDir=$fixture" '/DInstallerAppId={{6869BFEF-78AC-4D2E-9420-316BCBCBE318}' '/DSetupBaseName=New7z-IntegrationTest' "$projectRoot/installer/New7z.iss"
+& $IsccPath /Q "/DAppVersion=$($manifest.Version)" "/DBuildId=$($manifest.BuildId)" "/DPayloadDir=$PayloadDirectory" "/DReleaseDir=$fixture" "/DTargetArchitecture=$Architecture" '/DInstallerAppId={{6869BFEF-78AC-4D2E-9420-316BCBCBE318}' '/DSetupBaseName=New7z-IntegrationTest' "$projectRoot/installer/New7z.iss"
 if($LASTEXITCODE){throw 'Cannot compile isolated test installer.'}
 $SetupPath=Join-Path $fixture 'New7z-IntegrationTest.exe'
 $checks=[Collections.Generic.List[string]]::new()
@@ -97,7 +100,7 @@ try{
  } else {
   $server=Get-ItemPropertyValue -LiteralPath 'HKCU:/Software/Classes/CLSID/{642CF40A-831E-42A9-AC63-F5A0ABDD5C18}/InprocServer32' -Name '(default)'
   Check ($server -eq "$runtime\New7z.Shell.dll") 'compatible COM uses separate class and installed DLL'
-  & "$projectRoot/artifacts/native/x64/ShellPreferences.Tests.exe" --registered $server
+  & "$projectRoot/artifacts/native/$Architecture/ShellPreferences.Tests.exe" --registered $server
   Check ($LASTEXITCODE -eq 0) 'installed COM activation and icon resource'
  }
  Check ((Get-ItemPropertyValue -LiteralPath 'HKCU:/Software/RegisteredApplications' -Name New7z) -eq 'Software\New7z\Capabilities') 'Windows Default Apps registration'
