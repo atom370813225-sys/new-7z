@@ -82,11 +82,35 @@ try
     Assert(!await ExplorerIcons.ApplyAsync("animals",overrides,Path.Combine(install,"Versions","old"),sandbox),"Old or unregistered runtime must not take over associations");
     Assert(!await ExplorerIcons.ApplyAsync("animals",overrides,root,sandbox),"Portable runtime must not change associations");
     Assert(New7z.Core.ShellIntegration.Notifications==4,"Notify the shell after each successful association update");
+    using(var machine=Registry.CurrentUser.CreateSubKey(registryPath+"-machine"))
+    {
+        using(var userClass=sandbox.CreateSubKey(@"Software\Classes\.iso"))userClass.SetValue("","New7z.iso");
+        Assert(ExplorerIcons.IsDefaultHandler("iso",sandbox,machine),"A New7z class entry without UserChoice is the default app");
+        Assert(ExplorerIcons.IsDefaultHandler(".ISO",sandbox,machine),"Extension matching ignores dots and case");
+        using(var machineClass=machine.CreateSubKey(@"Software\Classes\.iso"))
+        {
+            machineClass.SetValue("","New7z.iso");
+            using(var userEmpty=sandbox.CreateSubKey(@"Software\Classes\.iso"))userEmpty.SetValue("","");
+            Assert(ExplorerIcons.IsDefaultHandler("iso",sandbox,machine),"An empty user class falls through to the machine default");
+            machineClass.SetValue("","Windows.IsoFile");
+            using(var broken=sandbox.CreateSubKey(@"Software\Classes\.iso"))broken.SetValue("","New7z.7z");
+            Assert(!ExplorerIcons.IsDefaultHandler("iso",sandbox,machine),"A different ProgID is not the New7z handler");
+        }
+        sandbox.DeleteSubKeyTree(@"Software\Classes\.iso",false);
+        machine.DeleteSubKeyTree(@"Software\Classes\.iso",false);
+        Assert(!ExplorerIcons.IsDefaultHandler("iso",sandbox,machine),"A missing association is not the New7z handler");
+        using(var userClass=sandbox.CreateSubKey(@"Software\Classes\.iso"))userClass.SetValue("","NEW7Z.ISO");
+        using(var choice=sandbox.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.iso\UserChoice"))choice.SetValue("ProgId","Other.Iso");
+        Assert(!ExplorerIcons.IsDefaultHandler("iso",sandbox,machine),"UserChoice must win over a New7z class entry");
+        sandbox.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.iso",false);
+        sandbox.DeleteSubKeyTree(@"Software\Classes\.iso",false);
+    }
     Console.WriteLine($"PASS icon checks: {checks}");
 }
 finally
 {
     Registry.CurrentUser.DeleteSubKeyTree(registryPath,false);
+    Registry.CurrentUser.DeleteSubKeyTree(registryPath+"-machine",false);
     if(Directory.Exists(root))Directory.Delete(root,true);
 }
 

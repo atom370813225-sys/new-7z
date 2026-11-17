@@ -14,6 +14,28 @@ internal static class ExplorerIcons
     internal static Task<bool> ApplyAsync(string theme,IReadOnlyDictionary<string,string> customIcons)=>
         ApplyAsync(theme,new Dictionary<string,string>(customIcons,StringComparer.OrdinalIgnoreCase),Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory),Registry.CurrentUser);
 
+    // Explorer draws a file with the icon of its default app, so a synced ProgID icon
+    // is only visible when Windows resolves that ProgID for the extension.
+    internal static bool IsDefaultHandler(string extension)=>
+        IsDefaultHandler(extension,Registry.CurrentUser,Registry.LocalMachine);
+
+    // Registry/runtime boundaries are explicit so integration tests can use isolated keys.
+    internal static bool IsDefaultHandler(string extension,RegistryKey currentUser,RegistryKey localMachine)
+    {
+        extension=extension.TrimStart('.').ToLowerInvariant();
+        string? progId=null;
+        using(var choice=currentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\."+extension+@"\UserChoice"))
+            progId=choice?.GetValue("ProgId") as string;
+        // An empty user entry keeps the machine-wide default, matching the shell's merged view.
+        if(string.IsNullOrEmpty(progId))
+            using(var userClass=currentUser.OpenSubKey(@"Software\Classes\."+extension))
+                progId=userClass?.GetValue("") as string;
+        if(string.IsNullOrEmpty(progId))
+            using(var machineClass=localMachine.OpenSubKey(@"Software\Classes\."+extension))
+                progId=machineClass?.GetValue("") as string;
+        return string.Equals(progId,"New7z."+extension,StringComparison.OrdinalIgnoreCase);
+    }
+
     // Registry/runtime boundaries are explicit so integration tests can use isolated keys.
     internal static async Task<bool> ApplyAsync(string theme,IReadOnlyDictionary<string,string> customIcons,string appDirectory,RegistryKey currentUser)
     {

@@ -158,7 +158,17 @@ public sealed partial class MainWindow:Window
         foreach(var (job,handler) in taskSubscriptions)job.Updated-=handler;
         taskSubscriptions.Clear();ContentHost.Children.Clear();ContentHost.Children.Add(content);
     }
-    private void Notify(string text,InfoBarSeverity severity=InfoBarSeverity.Informational){Message.Message=text;Message.Severity=severity;Message.ActionButton=null;Message.IsOpen=true;}
+    private void Notify(string text,InfoBarSeverity severity=InfoBarSeverity.Informational,string? actionLabel=null,Action? action=null)
+    {
+        Message.Message=text;Message.Severity=severity;Message.ActionButton=null;
+        if(actionLabel!=null&&action!=null){var button=new Button{Content=actionLabel};button.Click+=(_,_)=>action();Message.ActionButton=button;}
+        Message.IsOpen=true;
+    }
+    private void OpenDefaultAppsSettings()
+    {
+        try{Process.Start(new ProcessStartInfo(AppEnvironment.IsPackaged?"ms-settings:defaultapps":"ms-settings:defaultapps?registeredAppUser="+Uri.EscapeDataString("New7z")){UseShellExecute=true});}
+        catch(Exception ex){Notify(T("无法打开 Windows 设置：","Cannot open Windows Settings: ")+ex.Message,InfoBarSeverity.Error);}
+    }
     private void SelectPage(string name)
     {
         if(page!=name)settingsCategory=null;
@@ -729,15 +739,19 @@ public sealed partial class MainWindow:Window
     {
         try{var file=FormatIconPath(ext);preview.Source=File.Exists(file)?new BitmapImage(new Uri(file)):null;}catch{preview.Source=null;}
     }
-    private async Task SyncExplorerIconsAsync()
+    private async Task<bool> SyncExplorerIconsAsync()
     {
-        if(AppEnvironment.IsPackaged)return;
+        if(AppEnvironment.IsPackaged)return false;
         try
         {
             if(!await ExplorerIcons.ApplyAsync(settings.FormatIconTheme,settings.FormatIcons))
+            {
                 Notify(T("应用内图标已保存，但资源管理器图标未同步。请在设置 → 文件关联中点击「注册 / 修复文件关联」后重试。","App icons were saved, but Explorer icons were not synced. Register / repair associations in Settings → File associations, then try again."),InfoBarSeverity.Warning);
+                return false;
+            }
+            return true;
         }
-        catch(Exception ex){Notify(T("应用内图标已保存，但资源管理器图标未同步：","App icons were saved, but Explorer icons were not synced: ")+ex.Message,InfoBarSeverity.Warning);}
+        catch(Exception ex){Notify(T("应用内图标已保存，但资源管理器图标未同步：","App icons were saved, but Explorer icons were not synced: ")+ex.Message,InfoBarSeverity.Warning);return false;}
     }
     private void AddIconSettings(StackPanel panel)
     {
@@ -774,11 +788,7 @@ public sealed partial class MainWindow:Window
         }
         formats.Children.Add(themePreview);
         formats.Children.Add(Text(T("单个格式的自定义图标优先于主题；「恢复默认」会回到当前主题的图标。","A per-format custom icon takes priority over the theme; Restore default uses the theme icon."),12));
-        formats.Children.Add(Button(T("选择默认应用","Choose default apps"),(_,_)=>
-        {
-            try{Process.Start(new ProcessStartInfo(AppEnvironment.IsPackaged?"ms-settings:defaultapps":"ms-settings:defaultapps?registeredAppUser="+Uri.EscapeDataString("New7z")){UseShellExecute=true});}
-            catch(Exception ex){Notify(T("无法打开 Windows 设置：","Cannot open Windows Settings: ")+ex.Message,InfoBarSeverity.Error);}
-        }));
+        formats.Children.Add(Button(T("选择默认应用","Choose default apps"),(_,_)=>OpenDefaultAppsSettings()));
         foreach(var ext in FormatNames)
         {
             var row=new Grid{ColumnSpacing=12};
@@ -801,7 +811,10 @@ public sealed partial class MainWindow:Window
                     settings.FormatIcons.TryGetValue(ext,out var previous);settings.FormatIcons[ext]=target;
                     try{settings.Save();saved=true;}catch{if(previous==null)settings.FormatIcons.Remove(ext);else settings.FormatIcons[ext]=previous;throw;}
                     SetFormatPreview(formatPreview,ext);if(reset!=null)reset.IsEnabled=true;
-                    await SyncExplorerIconsAsync();DeleteCustomIcon(previous);
+                    var synced=await SyncExplorerIconsAsync();DeleteCustomIcon(previous);
+                    // The in-app icon is already saved; Explorer can only show it when it owns the extension.
+                    if(synced&&!ExplorerIcons.IsDefaultHandler(ext))
+                        Notify(T($"{ext.ToUpperInvariant()} 的默认程序不是 New7z，资源管理器仍会显示其他程序的图标。设为默认应用后即可显示新图标。",$"{ext.ToUpperInvariant()} is not handled by New7z, so Explorer keeps another app's icon. Set New7z as the default app to show it."),InfoBarSeverity.Warning,T("设置默认应用","Set default app"),OpenDefaultAppsSettings);
                 }
                 catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}
                 finally{if(!saved&&target.Length>0)DeleteCustomIcon(target);formatSettings.IsEnabled=true;}
