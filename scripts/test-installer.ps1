@@ -143,8 +143,21 @@ try{
  Check ($appProcess.ExitCode -eq 0 -and (Test-Path $reportPath)) 'installed app starts with bundled runtime and no SDK on PATH'
  $appProcess=$null;$report=Get-Content $reportPath -Raw | ConvertFrom-Json
  Check ($report.Result -eq 'PASS' -and $report.ArchiveBinding -and $report.Text -and $report.Image) 'trimmed settings, XAML bindings, text and image preview'
- $menuLanguage=(Get-ItemProperty -LiteralPath 'HKCU:/Software/New7z/Explorer' -Name Language -ErrorAction SilentlyContinue).Language
+ # --verify-ui deliberately skips normal startup side effects. Start the app normally
+ # before checking language persistence; a clean runner has no pre-existing preference.
+ $normalStart=[Diagnostics.ProcessStartInfo]::new("$runtime/New7z.App.exe")
+ $normalStart.WorkingDirectory=$runtime;$normalStart.UseShellExecute=$false;$normalStart.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
+ $appProcess=[Diagnostics.Process]::Start($normalStart)
+ $menuLanguage=$null
+ for($attempt=0;$attempt -lt 100;$attempt++){
+  $appProcess.Refresh()
+  if($appProcess.HasExited){throw 'Installed app exited during normal startup.'}
+  $menuLanguage=(Get-ItemProperty -LiteralPath 'HKCU:/Software/New7z/Explorer' -Name Language -ErrorAction SilentlyContinue).Language
+  if($appProcess.MainWindowHandle -ne [IntPtr]::Zero -and $menuLanguage -in @('zh','en')){break}
+  Start-Sleep -Milliseconds 100
+ }
  Check ($menuLanguage -in @('zh','en')) 'app records Explorer menu language'
+ if(!$appProcess.CloseMainWindow() -or !$appProcess.WaitForExit(10000)){throw 'Installed app did not close after normal startup verification.'}
  $oldRuntime=Join-Path $install 'Versions/0.0.9-oldtest'
  New-Item -ItemType Directory -Path $oldRuntime -Force | Out-Null
  Set-Content -LiteralPath (Join-Path $oldRuntime 'old.txt') -Value 'old version'
