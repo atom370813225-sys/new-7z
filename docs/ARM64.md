@@ -1,6 +1,16 @@
-# Windows ARM64 预览版
+# Windows ARM64
 
 目标系统：Windows 11 ARM64。主程序、独立引擎进程、7-Zip 引擎、原生桥接、Explorer 扩展及 Shell 启动器均采用 ARM64，.NET 与 WinUI 运行库随包提供。ARM64 安装器拒绝 x64 系统；当前不提供 Windows 10 ARM64 安装包。
+
+## 1.0.11 统一正式版
+
+Windows 11 x64、Windows 10 x64（1809+）与 Windows 11 ARM64 统一使用 `v1.0.11` 正式发行标签。ARM64 安装包为 `New7z-1.0.11-arm64-Setup.exe`，不再采用独立预览版本号；自动更新继续按进程架构选择同版本安装包。
+
+下载：[GitHub 1.0.11](https://github.com/outsideoftime/new-7z/releases/tag/v1.0.11) · [Gitee 1.0.11](https://gitee.com/wgliangzero/new-7z/releases/tag/v1.0.11)。同一 `SHA256SUMS.txt` 包含三个安装器，`release-manifest.json` 记录 x64 载荷，`release-manifest-arm64.json` 记录 ARM64 载荷。
+
+产物取自 [Actions 44002638246](https://github.com/outsideoftime/new-7z/actions/runs/44002638246)，构建提交 `c851d9157ce094175d935e5d5bb660d67494ad5f`。x64 与原生 ARM64 均通过 357 项核心集成、45 项图标、24 项设置/更新/活动锁、117 项原生拖放及菜单偏好检查；ARM64 另通过安装、发布 UI、升级和卸载检查。发布提交仅更新文档，生产源码与此构建一致。
+
+ARM64 安装器为 29,966,000 字节，SHA256 `AAA90BB4D5BFF8AD9CAFD331F720D8288D760D0248BD76741D6E062714617344`，BuildId `d2e7ae622044`。安装包未签名；本机 x64 上没有执行 ARM64 程序，具体设备上的手动 Explorer 点击、高 DPI、多显示器和触屏仍需用户反馈。
 
 ## 构建
 

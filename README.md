@@ -2,17 +2,17 @@
 
 [![Release](https://img.shields.io/github/v/release/outsideoftime/new-7z?label=release)](https://github.com/outsideoftime/new-7z/releases/latest) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011%20x64-0078D4)](#)
 
-**New7z（新 7z）** 是一款面向 Windows 10 / 11 的开源免费压缩 / 解压软件，使用 WinUI 3 界面和完整的 7-Zip 引擎。支持创建 7z、ZIP、TAR，读取和解压 7z、ZIP、RAR、TAR、GZ、XZ、BZ2、ISO 等常见压缩格式；中文/英文界面、本地离线运行，不需要另行安装 7-Zip 或 .NET 运行库。当前正式版：**1.0.9**，Windows 10 / 11 x64。
+**New7z（新 7z）** 是一款面向 Windows 10 / 11 的开源免费压缩 / 解压软件，使用 WinUI 3 界面和完整的 7-Zip 引擎。支持创建 7z、ZIP、TAR，读取和解压 7z、ZIP、RAR、TAR、GZ、XZ、BZ2、ISO 等常见压缩格式；中文/英文界面、本地离线运行，不需要另行安装 7-Zip 或 .NET 运行库。当前正式版：**1.0.11**，Windows 10 / 11 x64、Windows 11 ARM64 共用同一发行版本。
 
-[下载安装包](https://github.com/outsideoftime/new-7z/releases/latest) · [操作说明](docs/操作说明.md) · [MIT 许可](LICENSE) · [第三方许可](THIRD-PARTY-NOTICES.md) · [安装与分发说明](docs/安装包发布.md)
+[GitHub 下载](https://github.com/outsideoftime/new-7z/releases/latest) · [Gitee 下载](https://gitee.com/wgliangzero/new-7z/releases/tag/v1.0.11) · [操作说明](docs/操作说明.md) · [MIT 许可](LICENSE) · [第三方许可](THIRD-PARTY-NOTICES.md) · [安装与分发说明](docs/安装包发布.md)
 
 ## 使用
 
-下载安装 EXE，按向导安装到当前用户目录。安装包约 **30.16 MiB**，包含 .NET、WinUI 和自编译 7-Zip 引擎，可离线运行，无需安装完整 7-Zip。当前发行文件尚未进行发布者代码签名。详细操作见 [操作说明](docs/操作说明.md)。
+下载安装 EXE，按向导安装到当前用户目录。x64 安装包约 **30.30 MiB**，ARM64 安装包约 **28.58 MiB**，包含 .NET、WinUI 和自编译 7-Zip 引擎，可离线运行，无需安装完整 7-Zip。当前发行文件尚未进行发布者代码签名。详细操作见 [操作说明](docs/操作说明.md)。
 
 Windows 10 x64（1809 及以上）请下载同一 Release 中的 `New7z-<版本>-win10-x64-Setup.exe`。它与 Windows 11 安装包使用相同的程序文件和版本号，只放宽了系统要求；Windows 10 上自动使用兼容右键菜单，Windows 11 安装包和现代菜单保持不变。
 
-Windows 11 ARM64 提供 [1.0.10 ARM64 预览安装包](https://github.com/outsideoftime/new-7z/releases/tag/v1.0.10-arm64-preview)，已通过原生 ARM64 云端的功能、安装、升级与卸载测试，详情见 [ARM64 说明](docs/ARM64.md)。当前不支持 Windows 10 ARM64。
+Windows 11 ARM64 使用同一 [1.0.11 正式版](https://github.com/outsideoftime/new-7z/releases/tag/v1.0.11) 中的 `New7z-1.0.11-arm64-Setup.exe`，已通过原生 ARM64 云端的功能、安装、升级与卸载测试，详情见 [ARM64 说明](docs/ARM64.md)。ARM64 与 x64 版本号统一，自动更新按运行架构选择安装包；当前不支持 Windows 10 ARM64。
 
 - 创建 7z、ZIP、TAR，7z/ZIP 支持密码与 7z 文件名加密；读取、解压和校验引擎支持的归档。设置中可选择默认格式，并分别指定 7z/ZIP 的默认压缩方法。
 - 压缩包内直接预览图片和文本/代码文件，常见源码、配置、脚本扩展名（.cs、.py、.rs、.toml、Makefile 等）都可当作文本查看；支持中文文件名、文件夹、多选解压。
