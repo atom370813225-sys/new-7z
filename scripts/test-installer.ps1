@@ -1,9 +1,12 @@
-param([string]$PayloadDirectory,[string]$IsccPath)
+param([string]$PayloadDirectory,[string]$IsccPath,[ValidateSet('x64','arm64')][string]$Architecture='x64')
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot -Parent
-if(!$PayloadDirectory){$PayloadDirectory=(Get-Content "$projectRoot/artifacts/latest-installer-payload.txt" -Raw).Trim()}
+$pointer=if($Architecture -eq 'x64'){'latest-installer-payload.txt'}else{"latest-installer-payload-$Architecture.txt"}
+if(!$PayloadDirectory){$PayloadDirectory=(Get-Content "$projectRoot/artifacts/$pointer" -Raw).Trim()}
 if(!$IsccPath){$IsccPath="$projectRoot/artifacts/tools/InnoSetup/ISCC.exe"}
-$manifest=Get-Content "$projectRoot/artifacts/releases/release-manifest.json" -Raw | ConvertFrom-Json
+$releaseDirectory=if($Architecture -eq 'x64'){"$projectRoot/artifacts/releases"}else{"$projectRoot/artifacts/releases/$Architecture"}
+$manifest=Get-Content "$releaseDirectory/release-manifest.json" -Raw | ConvertFrom-Json
+if($manifest.Architecture -ne $Architecture){throw 'Installer test architecture does not match the payload.'}
 $fixture=Join-Path $projectRoot ('artifacts/install-test-'+[guid]::NewGuid().ToString('N'))
 $install=Join-Path $fixture '中文 安装目录'
 $testId='{6869BFEF-78AC-4D2E-9420-316BCBCBE318}'
@@ -11,7 +14,7 @@ $uninstallRegistry="HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/${
 if(Test-Path -LiteralPath $uninstallRegistry){throw 'A previous test installation exists; refusing to overwrite it.'}
 New-Item -ItemType Directory -Path $fixture -Force | Out-Null
 # A distinct product ID protects the user's actual New7z uninstall registration.
-& $IsccPath /Q "/DAppVersion=$($manifest.Version)" "/DBuildId=$($manifest.BuildId)" "/DPayloadDir=$PayloadDirectory" "/DReleaseDir=$fixture" '/DInstallerAppId={{6869BFEF-78AC-4D2E-9420-316BCBCBE318}' '/DSetupBaseName=New7z-IntegrationTest' "$projectRoot/installer/New7z.iss"
+& $IsccPath /Q "/DAppVersion=$($manifest.Version)" "/DBuildId=$($manifest.BuildId)" "/DPayloadDir=$PayloadDirectory" "/DReleaseDir=$fixture" "/DTargetArchitecture=$Architecture" '/DInstallerAppId={{6869BFEF-78AC-4D2E-9420-316BCBCBE318}' '/DSetupBaseName=New7z-IntegrationTest' "$projectRoot/installer/New7z.iss"
 if($LASTEXITCODE){throw 'Cannot compile isolated test installer.'}
 $SetupPath=Join-Path $fixture 'New7z-IntegrationTest.exe'
 $checks=[Collections.Generic.List[string]]::new()
@@ -43,7 +46,7 @@ $shortcutBackup=Join-Path $fixture 'New7z.lnk.backup'
 if(Test-Path -LiteralPath $shortcut){Copy-Item -LiteralPath $shortcut -Destination $shortcutBackup}
 function Preferences([switch]$ExceptCompressMenu) {
  $key=$registry.OpenSubKey('Software\New7z\Explorer')
- if(!$key){return '<absent>'}
+ if(!$key){if($ExceptCompressMenu){return ''};return '<absent>'}
  try{$names=@($key.GetValueNames() | Sort-Object);if($ExceptCompressMenu){$names=@($names | Where-Object {$_ -ne 'HideWindowsCompressMenu' -and $_ -ne 'Language'})};return (@($names | ForEach-Object {"$_=$($key.GetValue($_))"}) -join ';')}finally{$key.Dispose()}
 }
 $preferencesBefore=Preferences -ExceptCompressMenu
@@ -73,6 +76,7 @@ function Run-Setup([string]$Extra,[string]$Log){
  Wait-Integration $startUtc
 }
 function Uninstall {
+ if(!(Test-Path -LiteralPath $uninstallRegistry)){return}
  $uninstaller=Join-Path $install 'Uninstall/unins000.exe'
  if(Test-Path -LiteralPath $uninstaller){
   $process=Start-Process -FilePath $uninstaller -ArgumentList ('/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="'+(Join-Path $fixture 'uninstall.log')+'"') -WindowStyle Hidden -PassThru
@@ -97,7 +101,7 @@ try{
  } else {
   $server=Get-ItemPropertyValue -LiteralPath 'HKCU:/Software/Classes/CLSID/{642CF40A-831E-42A9-AC63-F5A0ABDD5C18}/InprocServer32' -Name '(default)'
   Check ($server -eq "$runtime\New7z.Shell.dll") 'compatible COM uses separate class and installed DLL'
-  & "$projectRoot/artifacts/native/x64/ShellPreferences.Tests.exe" --registered $server
+  & "$projectRoot/artifacts/native/$Architecture/ShellPreferences.Tests.exe" --registered $server
   Check ($LASTEXITCODE -eq 0) 'installed COM activation and icon resource'
  }
  Check ((Get-ItemPropertyValue -LiteralPath 'HKCU:/Software/RegisteredApplications' -Name New7z) -eq 'Software\New7z\Capabilities') 'Windows Default Apps registration'
@@ -140,8 +144,21 @@ try{
  Check ($appProcess.ExitCode -eq 0 -and (Test-Path $reportPath)) 'installed app starts with bundled runtime and no SDK on PATH'
  $appProcess=$null;$report=Get-Content $reportPath -Raw | ConvertFrom-Json
  Check ($report.Result -eq 'PASS' -and $report.ArchiveBinding -and $report.Text -and $report.Image) 'trimmed settings, XAML bindings, text and image preview'
- $menuLanguage=(Get-ItemProperty -LiteralPath 'HKCU:/Software/New7z/Explorer' -Name Language -ErrorAction SilentlyContinue).Language
+ # --verify-ui deliberately skips normal startup side effects. Start the app normally
+ # before checking language persistence; a clean runner has no pre-existing preference.
+ $normalStart=[Diagnostics.ProcessStartInfo]::new("$runtime/New7z.App.exe")
+ $normalStart.WorkingDirectory=$runtime;$normalStart.UseShellExecute=$false;$normalStart.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
+ $appProcess=[Diagnostics.Process]::Start($normalStart)
+ $menuLanguage=$null
+ for($attempt=0;$attempt -lt 100;$attempt++){
+  $appProcess.Refresh()
+  if($appProcess.HasExited){throw 'Installed app exited during normal startup.'}
+  $menuLanguage=(Get-ItemProperty -LiteralPath 'HKCU:/Software/New7z/Explorer' -Name Language -ErrorAction SilentlyContinue).Language
+  if($appProcess.MainWindowHandle -ne [IntPtr]::Zero -and $menuLanguage -in @('zh','en')){break}
+  Start-Sleep -Milliseconds 100
+ }
  Check ($menuLanguage -in @('zh','en')) 'app records Explorer menu language'
+ if(!$appProcess.CloseMainWindow() -or !$appProcess.WaitForExit(10000)){throw 'Installed app did not close after normal startup verification.'}
  $oldRuntime=Join-Path $install 'Versions/0.0.9-oldtest'
  New-Item -ItemType Directory -Path $oldRuntime -Force | Out-Null
  Set-Content -LiteralPath (Join-Path $oldRuntime 'old.txt') -Value 'old version'

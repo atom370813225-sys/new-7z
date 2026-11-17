@@ -1,5 +1,5 @@
 #ifndef AppVersion
- #define AppVersion "1.0.9"
+ #define AppVersion "1.0.10"
 #endif
 #ifndef BuildId
  #error BuildId is required
@@ -11,18 +11,25 @@
  #error ReleaseDir is required
 #endif
 #define RuntimeDir "Versions\" + AppVersion + "-" + BuildId
+#ifndef TargetArchitecture
+ #define TargetArchitecture "x64"
+#endif
 #ifndef InstallerAppId
  #define InstallerAppId "{{4F8A4D03-F13A-40C1-91EE-6D9957C98406}"
 #endif
 #ifndef SetupBaseName
- #define SetupBaseName "New7z-" + AppVersion + "-x64-Setup"
+ #define SetupBaseName "New7z-" + AppVersion + "-" + TargetArchitecture + "-Setup"
 #endif
 ; The Windows 11 setup requires 11; the Windows 10 variant lowers this to 10.0.17763.
 #ifndef MinWindowsVersion
  #define MinWindowsVersion "10.0.22000"
 #endif
 #ifndef NotesFile
+ #if TargetArchitecture == "arm64"
+ #define NotesFile "InstallNotes-Arm64.txt"
+ #else
  #define NotesFile "InstallNotes.txt"
+ #endif
 #endif
 
 [Setup]
@@ -36,8 +43,13 @@ VersionInfoVersion={#AppVersion}.0
 DefaultDirName={localappdata}\Programs\New7z
 DefaultGroupName=New7z
 PrivilegesRequired=lowest
+#if TargetArchitecture == "arm64"
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#else
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 MinVersion={#MinWindowsVersion}
 WizardStyle=modern dynamic windows11
 SetupIconFile={#PayloadDir}\Assets\New7z.ico

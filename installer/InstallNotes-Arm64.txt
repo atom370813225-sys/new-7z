@@ -1,0 +1,11 @@
+New7z - Windows 11 ARM64 preview
+
+This package contains native ARM64 builds of the app, engine worker, 7-Zip engine and Explorer extension, together with the ARM64 .NET and WinUI runtime.
+
+The ARM64 edition is a preview. Automated checks run on a native Windows ARM64 GitHub-hosted runner; physical-device interaction and performance still need feedback from ARM64 users.
+
+Install on Windows 11 ARM64. Windows 10 ARM64 and x64 Windows are not supported by this package.
+
+The installer preserves preferences and does not force changes to default apps, enable Developer Mode or import certificates. The modern Explorer menu is used when available; otherwise the compatible menu is registered.
+
+This package is not publisher-signed. Third-party licenses and the original 7-Zip source archive are included in the Licenses folder.

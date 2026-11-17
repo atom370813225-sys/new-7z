@@ -4,7 +4,10 @@ param(
  [string]$Tag,
  [string]$Name,
  [string]$NotesFile,
- [string[]]$Assets
+ [string[]]$Assets,
+ [ValidateSet('x64','arm64')][string]$Architecture='x64',
+ [switch]$Prerelease,
+ [string]$TargetCommitish='main'
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot -Parent
@@ -13,11 +16,12 @@ $version=([xml](Get-Content "$projectRoot/Directory.Build.props" -Raw)).Project.
 if(!$Tag){$Tag="v$version"}
 if(!$Name){$Name="New7z $version"}
 $releaseDir=Join-Path $projectRoot 'artifacts/releases'
+if($Architecture -eq 'arm64'){$releaseDir=Join-Path $releaseDir 'arm64'}
 if(!$NotesFile){$NotesFile=Join-Path $releaseDir "RELEASE-NOTES-$version.md"}
 if(!$Assets){
- $Assets=@((Join-Path $releaseDir "New7z-$version-x64-Setup.exe"))
+ $Assets=@((Join-Path $releaseDir "New7z-$version-$Architecture-Setup.exe"))
  $win10Setup=Join-Path $releaseDir "New7z-$version-win10-x64-Setup.exe"
- if(Test-Path -LiteralPath $win10Setup){$Assets+=$win10Setup}
+ if($Architecture -eq 'x64' -and (Test-Path -LiteralPath $win10Setup)){$Assets+=$win10Setup}
  $Assets+=@((Join-Path $releaseDir 'SHA256SUMS.txt'),(Join-Path $releaseDir 'release-manifest.json'))}
 $notes=Get-Content -LiteralPath $NotesFile -Raw
 $api="https://gitee.com/api/v5/repos/$Repo"
@@ -25,7 +29,7 @@ $release=$null
 try{$release=Invoke-RestMethod -Uri "$api/releases/tags/$Tag`?access_token=$Token" -Method Get}catch{$release=$null}
 if(!$release){
  $release=Invoke-RestMethod -Uri "$api/releases?access_token=$Token" -Method Post -ContentType 'application/x-www-form-urlencoded' -Body @{
-  tag_name=$Tag;name=$Name;body=$notes;target_commitish='main';prerelease='false'}
+  tag_name=$Tag;name=$Name;body=$notes;target_commitish=$TargetCommitish;prerelease=$Prerelease.IsPresent.ToString().ToLowerInvariant()}
  Write-Host "Created release $Tag (id $($release.id))"
 }else{Write-Host "Release $Tag already exists (id $($release.id))"}
 $existing=@($release.assets | ForEach-Object {$_.name})

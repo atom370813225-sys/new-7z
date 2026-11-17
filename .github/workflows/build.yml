@@ -1,4 +1,4 @@
-name: Windows x64 build
+name: Windows x64 and ARM64 build
 on:
   push:
     branches: [main]
@@ -8,7 +8,18 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            runner: windows-2025
+            release: artifacts/releases
+          - architecture: arm64
+            runner: windows-11-arm
+            release: artifacts/releases/arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -19,20 +30,27 @@ jobs:
         run: ./scripts/get-build-tools.ps1
       - name: Build self-contained installer
         shell: pwsh
-        run: ./scripts/build-installer.ps1
+        run: ./scripts/build-installer.ps1 -Architecture ${{ matrix.architecture }}
       - name: Verify archive engine
         shell: pwsh
-        run: ./scripts/test.ps1
+        run: ./scripts/test.ps1 -Architecture ${{ matrix.architecture }}
       - name: Verify archive drag extraction and Shell copy
         shell: pwsh
-        run: ./scripts/test-drag-extraction.ps1
+        run: ./scripts/test-drag-extraction.ps1 -Architecture ${{ matrix.architecture }}
       - name: Verify native menu preferences
         shell: pwsh
-        run: ./scripts/test-shell-preferences.ps1
+        run: ./scripts/test-shell-preferences.ps1 -Architecture ${{ matrix.architecture }}
+      - name: Verify native ARM64 install, published UI, upgrade and uninstall
+        if: matrix.architecture == 'arm64'
+        shell: pwsh
+        run: ./scripts/test-installer.ps1 -Architecture arm64
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: New7z-windows-x64
+          name: New7z-windows-${{ matrix.architecture }}
           path: |
-            artifacts/releases/*-x64-Setup.exe
-            artifacts/releases/SHA256SUMS.txt
-            artifacts/releases/release-manifest.json
+            ${{ matrix.release }}/*-Setup.exe
+            ${{ matrix.release }}/SHA256SUMS.txt
+            ${{ matrix.release }}/release-manifest.json
+            docs/installer-tests.json
+            docs/shell-preferences-tests.txt

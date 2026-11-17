@@ -1,4 +1,4 @@
-param([string]$IsccPath,[string]$SigningCertificateThumbprint,[switch]$Untrimmed,[switch]$RequireSignature,[string]$TimestampServer='http://timestamp.digicert.com')
+param([string]$IsccPath,[string]$SigningCertificateThumbprint,[switch]$Untrimmed,[switch]$RequireSignature,[string]$TimestampServer='http://timestamp.digicert.com',[ValidateSet('x64','arm64')][string]$Architecture='x64')
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot -Parent
 if($RequireSignature -and !$SigningCertificateThumbprint){throw 'A trusted code signing certificate is required for a signed release. Pass -SigningCertificateThumbprint.'}
@@ -14,23 +14,25 @@ if(!$IsccPath){
 }
 if(!$IsccPath){throw 'Inno Setup compiler not found. Pass -IsccPath.'}
 $release=Join-Path $projectRoot 'artifacts/releases'
-$payload=Join-Path $projectRoot ('artifacts/installer-payload-'+$version+'-'+[guid]::NewGuid().ToString('N').Substring(0,8))
+if($Architecture -eq 'arm64'){$release=Join-Path $release 'arm64'}
+$payload=Join-Path $projectRoot ('artifacts/installer-payload-'+$version+'-'+$Architecture+'-'+[guid]::NewGuid().ToString('N').Substring(0,8))
+$platform=if($Architecture -eq 'arm64'){'ARM64'}else{'x64'}
 New-Item -ItemType Directory -Path $release,$payload -Force | Out-Null
 Push-Location $projectRoot
 try{
- if(!(Test-Path -LiteralPath "$projectRoot/artifacts/native/x64/7z.dll")){& "$PSScriptRoot/build-native.ps1"}
- & "$PSScriptRoot/build-shell.ps1"
+ if(!(Test-Path -LiteralPath "$projectRoot/artifacts/native/$Architecture/7z.dll")){& "$PSScriptRoot/build-native.ps1" -Architecture $Architecture}
+ & "$PSScriptRoot/build-shell.ps1" -Architecture $Architecture
  $trim=if($Untrimmed){'false'}else{'true'}
- & dotnet publish src/New7z.App/New7z.App.csproj -c Release -p:Platform=x64 "-p:TrimRelease=$trim" --self-contained true -o $payload
+ & dotnet publish src/New7z.App/New7z.App.csproj -c Release "-p:Platform=$platform" "-p:New7zArchitecture=$Architecture" "-p:TrimRelease=$trim" --self-contained true -o $payload
  if($LASTEXITCODE){throw 'Release publish failed.'}
  # Debugger-only runtime files and WinUI UI strings for languages this app never uses.
- Get-ChildItem -LiteralPath $payload -File | Where-Object {$_.Name -match '^(mscordaccore.*|mscordbi|Microsoft\.DiaSymReader\.Native\.amd64)\.dll$'} | Remove-Item -Force
+ Get-ChildItem -LiteralPath $payload -File | Where-Object {$_.Name -match '^(mscordaccore.*|mscordbi|Microsoft\.DiaSymReader\.Native\.(amd64|arm64))\.dll$'} | Remove-Item -Force
  foreach($directory in Get-ChildItem -LiteralPath $payload -Directory){
   if($directory.Name -notmatch '^[a-z]{2,3}(-[A-Za-z]{2,8})*$' -or $directory.Name -in @('zh-CN','en-US')){continue}
   $kept=@(Get-ChildItem -LiteralPath $directory.FullName -Recurse -File -Force | Where-Object {$_.Extension -ne '.mui'})
   if($kept.Count -eq 0){Remove-Item -LiteralPath $directory.FullName -Recurse -Force}
  }
- Copy-Item -LiteralPath 'artifacts/native/x64/New7z.ShellHost.exe' -Destination "$payload/New7z.ShellHost.exe" -Force
+ Copy-Item -LiteralPath "artifacts/native/$Architecture/New7z.ShellHost.exe" -Destination "$payload/New7z.ShellHost.exe" -Force
  foreach($required in @('New7z.EngineHost.exe','New7z.EngineHost.dll','New7z.EngineHost.deps.json','New7z.EngineHost.runtimeconfig.json','Assets/FileTypes/csharp.png','Licenses/FileTypeIcons-MIT.txt','Licenses/K4os-LZ4-MIT.txt','Licenses/LZ4-BSD.txt','Licenses/xxHash-BSD.txt','Licenses/ZstdSharp-License.txt','Licenses/Zstandard-BSD.txt')){if(!(Test-Path -LiteralPath (Join-Path $payload $required))){throw "Release worker, icon or license missing: $required"}}
  New-Item -ItemType Directory -Path "$payload/Licenses/Source" -Force | Out-Null
  Copy-Item -LiteralPath "$projectRoot/LICENSE" -Destination "$payload/Licenses/New7z-MIT.txt" -Force
@@ -39,13 +41,13 @@ try{
  if(Test-Path -LiteralPath $compilerLicense){Copy-Item -LiteralPath $compilerLicense -Destination "$payload/Licenses/InnoSetup-License.txt" -Force}
  Copy-Item -LiteralPath '7zSdk/7z2605-src.7z' -Destination "$payload/Licenses/Source/7z2605-src.7z" -Force
  Copy-Item -LiteralPath '7zSdk/Source/DOC/readme.txt' -Destination "$payload/Licenses/7-Zip-Source-Readme.txt" -Force
- Copy-Item -LiteralPath 'native/New7z.Native.cpp','scripts/build-native.ps1' -Destination "$payload/Licenses/Source" -Force
+ Copy-Item -LiteralPath 'native/New7z.Native.cpp','scripts/build-native.ps1','scripts/native-environment.ps1' -Destination "$payload/Licenses/Source" -Force
  Set-Content -LiteralPath "$payload/Licenses/SOURCE.txt" -Encoding utf8 -Value 'Unmodified 7-Zip 26.05 source archive is included in Source/7z2605-src.7z. Original: https://github.com/ip7z/7zip/releases/tag/26.05. New7z dynamically loads 7z.dll; replacement with an ABI-compatible build is allowed. Native bridge and build script are included for reference. Source archive SHA-256 is listed in the release manifest.'
  $nuget=Join-Path $env:USERPROFILE '.nuget/packages'
  Copy-Item -LiteralPath "$nuget/microsoft.windowsappsdk.winui/1.8.260803003/license.txt" -Destination "$payload/Licenses/WindowsAppSDK-License.txt" -Force
  $notice=Get-ChildItem "$nuget/microsoft.windowsappsdk.foundation/1.8.260803002" -Filter NOTICE.txt -File | Select-Object -First 1
  if($notice){Copy-Item -LiteralPath $notice.FullName -Destination "$payload/Licenses/WindowsAppSDK-NOTICE.txt" -Force}
- $runtime=Get-ChildItem "$nuget/microsoft.netcore.app.runtime.win-x64" -Directory | Sort-Object {[version]$_.Name} -Descending | Select-Object -First 1
+ $runtime=Get-ChildItem "$nuget/microsoft.netcore.app.runtime.win-$Architecture" -Directory | Sort-Object {[version]$_.Name} -Descending | Select-Object -First 1
  foreach($notice in @('LICENSE.TXT','THIRD-PARTY-NOTICES.TXT')){
   $found=Get-ChildItem -LiteralPath $runtime.FullName -File -Recurse | Where-Object {$_.Name -ieq $notice} | Select-Object -First 1
   if($found){Copy-Item -LiteralPath $found.FullName -Destination "$payload/Licenses/DotNet-$notice" -Force}
@@ -55,6 +57,7 @@ try{
  Copy-Item -LiteralPath 'shell/AppxManifest.xml' -Destination "$identity/AppxManifest.xml" -Force
  $manifestText=Get-Content -LiteralPath "$identity/AppxManifest.xml" -Raw
  $manifestText=[regex]::Replace($manifestText,'(<Identity[^>]*Version=")[0-9.]+(")',('${1}'+$version+'.0${2}'))
+ $manifestText=$manifestText.Replace('ProcessorArchitecture="x64"',('ProcessorArchitecture="'+$Architecture+'"'))
  if($signingCertificate){
   $identityXml=[xml]$manifestText
   $identityXml.Package.Identity.SetAttribute('Publisher',$signingCertificate.Subject)
@@ -71,7 +74,7 @@ try{
  Copy-Item -LiteralPath "$identity/Assets/logo.png" -Destination "$identityInput/Assets/logo.png"
  Copy-Item -LiteralPath "$identity/Assets/Store" -Destination "$identityInput/Assets/Store" -Recurse
  Copy-Item -LiteralPath "$identity/resources.pri" -Destination "$identityInput/resources.pri"
- $identityPackage=Join-Path $projectRoot 'artifacts/New7z.ContextMenu.msix'
+ $identityPackage=Join-Path $projectRoot "artifacts/New7z.ContextMenu-$Architecture.msix"
  & "$($sdk.FullName)/x64/makeappx.exe" pack /o /h SHA256 /d $identityInput /p $identityPackage /nv 2>&1 | Out-File -LiteralPath "$release/makeappx-build.log" -Encoding utf8
  if($LASTEXITCODE){throw 'Identity package build failed.'}
  Copy-Item -LiteralPath $identityPackage -Destination "$identity/New7z.ContextMenu.msix" -Force
@@ -81,23 +84,28 @@ try{
   Set-Content -LiteralPath "$identity/signed-package.marker" -Value $signingCertificate.Thumbprint
  }elseif(Test-Path -LiteralPath "$identity/signed-package.marker"){Remove-Item -LiteralPath "$identity/signed-package.marker"}
  foreach($required in @('New7z.App.exe','New7z.App.pri','resources.pri','MainWindow.xbf','ShellTaskWindow.xbf','7z.dll','New7z.Native.dll','New7z.Shell.dll','New7z.ShellHost.exe','Assets/New7z.ico','Assets/Formats/7z.ico','Assets/Formats/zip.ico','Licenses/LGPL.txt','Licenses/Source/7z2605-src.7z')){if(!(Test-Path -LiteralPath (Join-Path $payload $required))){throw "Release payload missing: $required"}}
+ & "$PSScriptRoot/test-payload-architecture.ps1" -PayloadDirectory $payload -Architecture $Architecture
  $hashes=@(Get-ChildItem -LiteralPath $payload -File -Recurse | Where-Object Extension -ne '.pdb' | Sort-Object FullName | ForEach-Object {[pscustomobject]@{File=[IO.Path]::GetRelativePath($payload,$_.FullName);SHA256=(Get-FileHash -LiteralPath $_.FullName).Hash;Size=$_.Length}})
  $payloadBytes=[Text.Encoding]::UTF8.GetBytes(($hashes | ConvertTo-Json -Depth 4 -Compress))
  $buildId=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($payloadBytes)).Substring(0,12).ToLowerInvariant()
  if((Test-Path "$payload/onnxruntime.dll") -or (Test-Path "$payload/DirectML.dll")){throw 'Unused AI/ML runtime leaked into the installer.'}
- [pscustomobject]@{Version=$version;Author='New7z';License='MIT (own code), third-party licenses retained';BuildId=$buildId;Architecture='x64';Trimmed=(!$Untrimmed);Signed=[bool]$SigningCertificateThumbprint;Files=$hashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath "$release/release-manifest.json" -Encoding utf8
- Set-Content -LiteralPath "$projectRoot/artifacts/latest-installer-payload.txt" -Value $payload
- & $IsccPath /Q "/DAppVersion=$version" "/DBuildId=$buildId" "/DPayloadDir=$payload" "/DReleaseDir=$release" installer/New7z.iss
+ [pscustomobject]@{Version=$version;Author='New7z';License='MIT (own code), third-party licenses retained';BuildId=$buildId;Architecture=$Architecture;Trimmed=(!$Untrimmed);Signed=[bool]$SigningCertificateThumbprint;Files=$hashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath "$release/release-manifest.json" -Encoding utf8
+ $pointer=if($Architecture -eq 'x64'){'latest-installer-payload.txt'}else{"latest-installer-payload-$Architecture.txt"}
+ Set-Content -LiteralPath "$projectRoot/artifacts/$pointer" -Value $payload
+ & $IsccPath /Q "/DAppVersion=$version" "/DBuildId=$buildId" "/DPayloadDir=$payload" "/DReleaseDir=$release" "/DTargetArchitecture=$Architecture" installer/New7z.iss
  if($LASTEXITCODE){throw 'Installer compilation failed.'}
- $setup=Join-Path $release "New7z-$version-x64-Setup.exe"
+ $setup=Join-Path $release "New7z-$version-$Architecture-Setup.exe"
  if($SigningCertificateThumbprint){& "$PSScriptRoot/sign-code.ps1" -Path $setup -CertificateThumbprint $SigningCertificateThumbprint -TimestampServer $TimestampServer -SignToolPath "$($sdk.FullName)/x64/signtool.exe"}
  # Windows 10 uses the same payload and version; only the minimum OS, setup name and
  # notes change. The Windows 11 setup above keeps its original name and requirements.
+ $installers=@($setup)
+ if($Architecture -eq 'x64'){
  $win10Setup=Join-Path $release "New7z-$version-win10-x64-Setup.exe"
  & $IsccPath /Q "/DAppVersion=$version" "/DBuildId=$buildId" "/DPayloadDir=$payload" "/DReleaseDir=$release" "/DSetupBaseName=New7z-$version-win10-x64-Setup" '/DMinWindowsVersion=10.0.17763' '/DNotesFile=InstallNotes-Win10.txt' installer/New7z.iss
  if($LASTEXITCODE){throw 'Windows 10 installer compilation failed.'}
  if($SigningCertificateThumbprint){& "$PSScriptRoot/sign-code.ps1" -Path $win10Setup -CertificateThumbprint $SigningCertificateThumbprint -TimestampServer $TimestampServer -SignToolPath "$($sdk.FullName)/x64/signtool.exe"}
- $installers=@($setup,$win10Setup)
+ $installers+=$win10Setup
+ }
  $sums=@(foreach($file in $installers){"$((Get-FileHash -LiteralPath $file).Hash)  $([IO.Path]::GetFileName($file))"})
  Set-Content -LiteralPath "$release/SHA256SUMS.txt" -Encoding ascii -Value ($sums -join "`r`n")
  foreach($file in $installers){Write-Host "Installer: $file";Write-Host "SHA256: $((Get-FileHash -LiteralPath $file).Hash)"}

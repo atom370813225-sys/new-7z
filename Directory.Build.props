@@ -1,1 +1,17 @@
-<Project><PropertyGroup><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><LangVersion>latest</LangVersion><EnableWindowsTargeting>true</EnableWindowsTargeting><MSBuildEnableWorkloadResolver>false</MSBuildEnableWorkloadResolver><Deterministic>true</Deterministic><Version>1.0.9</Version><Authors>New7z</Authors><Copyright>Copyright (c) 2026 王国梁</Copyright><PackageLicenseExpression>MIT</PackageLicenseExpression></PropertyGroup></Project>
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <MSBuildEnableWorkloadResolver>false</MSBuildEnableWorkloadResolver>
+    <Deterministic>true</Deterministic>
+    <Version>1.0.10</Version>
+    <Authors>New7z</Authors>
+    <Copyright>Copyright (c) 2026 王国梁</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <New7zArchitecture Condition="'$(New7zArchitecture)' == '' And ('$(Platform)' == 'ARM64' Or '$(RuntimeIdentifier)' == 'win-arm64')">arm64</New7zArchitecture>
+    <New7zArchitecture Condition="'$(New7zArchitecture)' == ''">x64</New7zArchitecture>
+    <New7zRuntimeIdentifier>win-$(New7zArchitecture)</New7zRuntimeIdentifier>
+  </PropertyGroup>
+</Project>
