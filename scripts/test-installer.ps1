@@ -46,7 +46,7 @@ $shortcutBackup=Join-Path $fixture 'New7z.lnk.backup'
 if(Test-Path -LiteralPath $shortcut){Copy-Item -LiteralPath $shortcut -Destination $shortcutBackup}
 function Preferences([switch]$ExceptCompressMenu) {
  $key=$registry.OpenSubKey('Software\New7z\Explorer')
- if(!$key){return '<absent>'}
+ if(!$key){if($ExceptCompressMenu){return ''};return '<absent>'}
  try{$names=@($key.GetValueNames() | Sort-Object);if($ExceptCompressMenu){$names=@($names | Where-Object {$_ -ne 'HideWindowsCompressMenu' -and $_ -ne 'Language'})};return (@($names | ForEach-Object {"$_=$($key.GetValue($_))"}) -join ';')}finally{$key.Dispose()}
 }
 $preferencesBefore=Preferences -ExceptCompressMenu
@@ -76,6 +76,7 @@ function Run-Setup([string]$Extra,[string]$Log){
  Wait-Integration $startUtc
 }
 function Uninstall {
+ if(!(Test-Path -LiteralPath $uninstallRegistry)){return}
  $uninstaller=Join-Path $install 'Uninstall/unins000.exe'
  if(Test-Path -LiteralPath $uninstaller){
   $process=Start-Process -FilePath $uninstaller -ArgumentList ('/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="'+(Join-Path $fixture 'uninstall.log')+'"') -WindowStyle Hidden -PassThru
