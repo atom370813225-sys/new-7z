@@ -39,7 +39,7 @@ public sealed partial class ShellTaskWindow:Window
         AutomationProperties.SetName(Progress,T("任务进度","Task progress"));
         RetryButton.Content=T("重试","Retry");FolderButton.Content=T("打开文件夹","Open Folder");
         StartButton.Content=T("开始","Start");CancelButton.Content=T("取消任务","Cancel Task");
-        Title="New7z · "+T("任务","Task");SystemBackdrop=new MicaBackdrop();
+        Title="New7z · "+T("任务","Task");
         if(AppWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.SetBorderAndTitleBar(true,false);

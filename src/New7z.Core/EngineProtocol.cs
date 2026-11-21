@@ -31,6 +31,7 @@ internal sealed record EngineMessage
     public ArchiveEntry[]? Entries {get;init;}
     public byte[]? Bytes {get;init;}
     public ExtractionResult? Extraction {get;init;}
+    public string? Comment {get;init;}
     public string? ErrorType {get;init;}
     public string? Error {get;init;}
 }
@@ -66,6 +67,7 @@ public static class EngineWorker
             {
                 case "list":result=result with{Entries=(await engine.ListAsync(request.Path,request.Password,token).ConfigureAwait(false)).ToArray()};break;
                 case "read":result=result with{Bytes=await engine.ReadAsync(request.Path,request.Entries.Single(),request.Password,request.ReadLimit,token).ConfigureAwait(false)};break;
+                case "comment":result=result with{Comment=await engine.CommentAsync(request.Path,request.Password,token).ConfigureAwait(false)};break;
                 case "test":await engine.TestAsync(request.Path,request.Password,progress,token).ConfigureAwait(false);break;
                 case "create":await engine.CreateAsync(request.Path,request.Sources,request.Format,request.Level,request.Password,request.EncryptNames,request.Method,progress,token,request.VolumeSize).ConfigureAwait(false);break;
                 case "modify":await engine.ModifyAsync(request.Path,request.Indices,request.Additions,request.Password,progress,token).ConfigureAwait(false);break;

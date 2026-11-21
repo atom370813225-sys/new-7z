@@ -22,6 +22,7 @@ try
         Console.WriteLine("PASS volume checks: "+checks.Count);return;
     }
     await StaleEntryTests.RunAsync(root,checks);
+    await CopyPlanTests.RunAsync(root,checks);
     var preferencesKey=@"Software\New7z.Tests\"+Guid.NewGuid().ToString("N");
     try
     {

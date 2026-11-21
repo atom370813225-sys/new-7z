@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -30,6 +31,7 @@ public sealed partial class MainWindow:Window
     private string? settingsCategory;
     private long homeVersion;
     private ListView? fileList;
+    private MenuFlyout? rowContextMenu;
     private TextBlock? countLabel;
     private TextBox? searchBox;
     private bool initialized;
@@ -53,13 +55,18 @@ public sealed partial class MainWindow:Window
         settings=startupSettings??UserSettings.Load();
         Loc.Language=Loc.Resolve(settings.Language);
         InitializeComponent();Title="New7z";ExtendsContentIntoTitleBar=true;SetTitleBar(TitleBar);
-        SystemBackdrop=new MicaBackdrop();AppWindow.Resize(new Windows.Graphics.SizeInt32(1320,880));
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(1320,880));
         AppWindow.Closing+=OnClosing;
-        initialized=true;ApplyLanguage();ApplyTheme();ApplyIcon();WindowAppearance.ApplyIcon(this);ShowHome();
+        initialized=true;Root.ActualThemeChanged+=(_,_)=>WindowAppearance.ApplyCaptionButtons(AppWindow,Root.ActualTheme);
+        ApplyLanguage();ApplyTheme();ApplyIcon();WindowAppearance.ApplyIcon(this);ShowHome();
         Root.AllowDrop=true;Root.DragOver+=(_,e)=>UpdateDragOver(e);Root.Drop+=FilesDropped;
         Root.Loaded+=async(_,_)=>{
             // The built-in settings item only exists once the NavigationView has loaded.
-            ApplyLanguage();
+            ApplyLanguage();Root.UpdateLayout();AlignContentLayer();Root.SizeChanged+=(_,_)=>AlignContentLayer();
+            // The pane can still be playing its startup transition when Loaded fires; a
+            // transform measured then includes that offset. Re-run once it settles.
+            var alignTimer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(500)};
+            alignTimer.Tick+=(_,_)=>{alignTimer.Stop();AlignContentLayer();};alignTimer.Start();
             var scale=Root.XamlRoot.RasterizationScale;var area=DisplayArea.GetFromWindowId(AppWindow.Id,DisplayAreaFallback.Primary).WorkArea;
             var width=Math.Min((int)(1240*scale),area.Width-60);var height=Math.Min((int)(820*scale),area.Height-60);
             AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(area.X+(area.Width-width)/2,area.Y+(area.Height-height)/2,width,height));
@@ -79,7 +86,9 @@ public sealed partial class MainWindow:Window
             if(launchArgs.Length==3&&launchArgs[0]=="--verify-ui"){await VerifyUiAsync(launchArgs[1],launchArgs[2]);return;}
             if(launchArgs.Length==3&&launchArgs[0]=="--verify-drag-ui"){await PrepareDragVerificationAsync(launchArgs[1],launchArgs[2]);return;}
             if(launchArgs.Length==3&&launchArgs[0]=="--verify-drag-text"){await PrepareDragVerificationAsync(launchArgs[1],launchArgs[2],true);return;}
-            _=Task.Run(CleanupDragCache);
+            if(launchArgs.Length==3&&launchArgs[0]=="--verify-copy"){await VerifyCopyAsync(launchArgs[1],launchArgs[2]);return;}
+            if(launchArgs.Length==3&&launchArgs[0]=="--show-row-menu"){await ShowRowMenuForCaptureAsync(launchArgs[1],launchArgs[2]);return;}
+            _=Task.Run(CleanupTempCaches);
             _=Task.Run(()=>{try{SaveExplorerLanguage();}catch{}});
             ShowPendingIntegrationError();
             if(!AppEnvironment.IsPackaged)
@@ -91,19 +100,38 @@ public sealed partial class MainWindow:Window
             StartAutomaticUpdates();
         };
     }
-    private static void CleanupDragCache()
+    private static void CleanupTempCaches()
     {
         try
         {
             var root=System.IO.Path.GetFullPath(System.IO.Path.GetTempPath()).TrimEnd('\\')+"\\";
-            foreach(var entry in Directory.EnumerateDirectories(root,"New7z-drag-*"))
+            foreach(var entry in Directory.EnumerateDirectories(root,"New7z-*"))
             {
                 var path=System.IO.Path.GetFullPath(entry);
-                if(!path.StartsWith(root,StringComparison.OrdinalIgnoreCase)||!System.IO.Path.GetFileName(path).StartsWith("New7z-drag-",StringComparison.Ordinal))continue;
-                try{if(!File.GetAttributes(path).HasFlag(System.IO.FileAttributes.ReparsePoint)&&Directory.GetLastWriteTimeUtc(path)<DateTime.UtcNow.AddDays(-2))Directory.Delete(path,true);}catch{}
+                if(!path.StartsWith(root,StringComparison.OrdinalIgnoreCase))continue;
+                var name=System.IO.Path.GetFileName(path);
+                // A copied file must stay readable for later pastes, so copies outlive drag caches.
+                var days=name.StartsWith("New7z-drag-",StringComparison.Ordinal)||name.StartsWith("New7z-run-",StringComparison.Ordinal)?2:name.StartsWith("New7z-copy-",StringComparison.Ordinal)?7:0;
+                if(days==0)continue;
+                try{if(!File.GetAttributes(path).HasFlag(System.IO.FileAttributes.ReparsePoint)&&Directory.GetLastWriteTimeUtc(path)<DateTime.UtcNow.AddDays(-days))Directory.Delete(path,true);}catch{}
             }
         }
         catch{}
+    }
+    // The content card starts level with the first navigation item and ends level with
+    // the Settings item instead of sitting a few pixels above both.
+    private void AlignContentLayer()
+    {
+        if(ContentLayer.Parent is not FrameworkElement host||Navigation.MenuItems.OfType<NavigationViewItem>().FirstOrDefault() is not { } first||Navigation.SettingsItem is not NavigationViewItem settings)return;
+        if(first.ActualHeight<=0||settings.ActualHeight<=0||host.ActualHeight<=0)return;
+        var top=first.TransformToVisual(host).TransformPoint(new Windows.Foundation.Point(0,0)).Y;
+        var settingsBottom=settings.TransformToVisual(host).TransformPoint(new Windows.Foundation.Point(0,settings.ActualHeight)).Y;
+        var bottom=host.ActualHeight-settingsBottom;
+        // A transform read during the pane's startup transition reports the animated
+        // offset; keep the previous margins until the settled values arrive.
+        if(top is < 0 or > 32||bottom is < 0 or > 32)return;
+        var margin=ContentLayer.Margin;
+        ContentLayer.Margin=new Thickness(margin.Left,top,margin.Right,bottom);
     }
     private void ApplyLanguage()
     {
@@ -199,10 +227,10 @@ public sealed partial class MainWindow:Window
             var row=new Grid{ColumnSpacing=12};row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});row.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
             var icon=new Image{Width=32,Height=32,VerticalAlignment=VerticalAlignment.Center};row.Children.Add(icon);
             var labels=Stack(3);labels.Children.Add(Text(System.IO.Path.GetFileName(path),14,true));
-            var location=Text(path,12);location.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];labels.Children.Add(location);Grid.SetColumn(labels,1);row.Children.Add(labels);
-            var open=Button(T("打开","Open"),async(_,_)=>await OpenArchiveAsync(path));Grid.SetColumn(open,2);row.Children.Add(open);
+            var location=Text(path,12);location.Opacity=0.65;labels.Children.Add(location);Grid.SetColumn(labels,1);row.Children.Add(labels);
+            var open=Button(T("打开","Open"),async(_,_)=>await OpenArchiveAsync(path));open.VerticalAlignment=VerticalAlignment.Center;Grid.SetColumn(open,2);row.Children.Add(open);
             availability.Add((path,location,open,icon));
-            var remove=new Button{Content=T("移除","Remove"),Padding=new Thickness(10,4,10,4),VerticalAlignment=VerticalAlignment.Center};ToolTipService.SetToolTip(remove,T("从最近使用中移除这一条","Remove this item from Recent"));remove.Click+=(_,_)=>{settings.Recent.Remove(path);settings.Save();ShowHome();};Grid.SetColumn(remove,3);row.Children.Add(remove);
+            var remove=Button(T("移除","Remove"),(_,_)=>{settings.Recent.Remove(path);settings.Save();ShowHome();});remove.VerticalAlignment=VerticalAlignment.Center;ToolTipService.SetToolTip(remove,T("从最近使用中移除这一条","Remove this item from Recent"));Grid.SetColumn(remove,3);row.Children.Add(remove);
             recent.Children.Add(Card(row));
         }
         if(settings.Recent.Count==0)recent.Children.Add(Text(T("还没有最近记录。打开一份压缩包开始。","No recent items yet. Open an archive to start.")));
@@ -280,11 +308,13 @@ public sealed partial class MainWindow:Window
     {
         if(archive==null){var empty=Stack();empty.Children.Add(Text(T("打开一份压缩包","Open an archive"),28,true));empty.Children.Add(Text(T("支持 7z、ZIP、RAR 等格式读取。","Reads 7z, ZIP, RAR and more.")));empty.Children.Add(Button(T("打开压缩包","Open archive"),async(_,_)=>{var f=await PickArchiveAsync();if(f!=null)await OpenArchiveAsync(f);},true));ShowContent(empty);return;}
         var grid=new Grid{RowSpacing=16};grid.RowDefinitions.Add(new(){Height=GridLength.Auto});grid.RowDefinitions.Add(new(){Height=GridLength.Auto});grid.RowDefinitions.Add(new(){Height=GridLength.Auto});grid.RowDefinitions.Add(new(){Height=new GridLength(1,GridUnitType.Star)});grid.RowDefinitions.Add(new(){Height=GridLength.Auto});
-        var heading=Stack(6);heading.Children.Add(Text(System.IO.Path.GetFileName(archive),26,true));var location=Text(archive,12);location.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];heading.Children.Add(location);grid.Children.Add(heading);
-        var actions=new Grid{ColumnSpacing=12};
+        var heading=Stack(6);heading.Children.Add(Text(System.IO.Path.GetFileName(archive),26,true));var location=Text(archive,12);location.Opacity=0.65;heading.Children.Add(location);grid.Children.Add(heading);
+        var actions=new Grid{ColumnSpacing=12,RowSpacing=8};
         actions.ColumnDefinitions.Add(new(){Width=GridLength.Auto});actions.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});actions.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
+        actions.RowDefinitions.Add(new(){Height=GridLength.Auto});actions.RowDefinitions.Add(new(){Height=GridLength.Auto});
         var primaryActions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=8};
         primaryActions.Children.Add(Button(T("全部解压","Extract all"),async(_,_)=>await ExtractDialogAsync(entries),true));primaryActions.Children.Add(Button(T("解压选中","Extract selected"),async(_,_)=>{var chosen=SelectedEntries();if(chosen.Count>0)await ExtractDialogAsync(chosen);else Notify(T("请先选择文件或文件夹。","Select files or folders first."));}));
+        var copySelected=Button(T("复制选中","Copy selected"),async(_,_)=>await CopySelectedAsync());ToolTipService.SetToolTip(copySelected,T("复制到剪贴板，可在资源管理器中粘贴（Ctrl+C）","Copy to the clipboard so you can paste in Explorer (Ctrl+C)"));primaryActions.Children.Add(copySelected);
         var canModify=ArchiveEngine.SupportsUpdate(archive);
         var addFiles=Button(T("添加文件","Add files"),async(_,_)=>await AddToArchiveAsync());addFiles.IsEnabled=canModify;if(!canModify)ToolTipService.SetToolTip(addFiles,T("当前格式只能读取；仅 7z 和 ZIP 支持修改。","This format is read-only; only 7z and ZIP can be modified."));primaryActions.Children.Add(addFiles);
         var deleteEntries=Button(T("删除","Delete"),async(_,_)=>await DeleteSelectedAsync());deleteEntries.IsEnabled=canModify;if(!canModify)ToolTipService.SetToolTip(deleteEntries,T("当前格式只能读取；仅 7z 和 ZIP 支持修改。","This format is read-only; only 7z and ZIP can be modified."));primaryActions.Children.Add(deleteEntries);
@@ -292,43 +322,70 @@ public sealed partial class MainWindow:Window
         var secondaryActions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=8,HorizontalAlignment=HorizontalAlignment.Right};
         secondaryActions.Children.Add(Button(T("预览","Preview"),async(_,_)=>{if(fileList?.SelectedItems.Count==1)await ActivateRowAsync(((ArchiveRow)fileList.SelectedItem).Entry);else Notify(T("请选择一个文件以预览。","Select one file to preview."));}));secondaryActions.Children.Add(Button(T("测试完整性","Test archive"),(_,_)=>{var current=archive;var pw=password;QueueJob(T("测试 ","Test ")+System.IO.Path.GetFileName(current),current,(p,ct)=>engine.TestAsync(current,pw,p,ct));}));secondaryActions.Children.Add(Button(T("新建压缩","New archive"),async(_,_)=>await CreateDialogAsync()));
         Grid.SetColumn(secondaryActions,2);actions.Children.Add(secondaryActions);Grid.SetRow(actions,1);grid.Children.Add(actions);
-        var pathbar=new Grid{ColumnSpacing=10};pathbar.ColumnDefinitions.Add(new(){Width=GridLength.Auto});pathbar.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});pathbar.ColumnDefinitions.Add(new(){Width=GridLength.Auto});pathbar.ColumnDefinitions.Add(new(){Width=new GridLength(260)});
+        // Keep every command reachable at the 900 DIP minimum width: when both groups no
+        // longer fit on one line, the secondary commands drop below the primary ones.
+        var secondaryStacked=false;
+        void ArrangeActions()
+        {
+            // Measure against the page, not the grid: an overfull Auto column reports its
+            // desired width, which would look like enough room for a second line.
+            var narrow=grid.ActualWidth>0&&grid.ActualWidth<primaryActions.ActualWidth+secondaryActions.ActualWidth+actions.ColumnSpacing;
+            if(narrow==secondaryStacked)return;
+            secondaryStacked=narrow;
+            Grid.SetRow(secondaryActions,narrow?1:0);
+            Grid.SetColumn(secondaryActions,narrow?0:2);
+            Grid.SetColumnSpan(secondaryActions,narrow?3:1);
+            secondaryActions.HorizontalAlignment=narrow?HorizontalAlignment.Left:HorizontalAlignment.Right;
+        }
+        actions.SizeChanged+=(_,_)=>ArrangeActions();grid.SizeChanged+=(_,_)=>ArrangeActions();
+        var pathbar=new Grid{ColumnSpacing=10};pathbar.ColumnDefinitions.Add(new(){Width=GridLength.Auto});pathbar.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});pathbar.ColumnDefinitions.Add(new(){Width=new GridLength(260)});
         pathbar.Children.Add(Button(T("↑ 上一级","↑ Up"),(_,_)=>SetFolder(folder.Contains('/')?folder[..folder.LastIndexOf('/')]:"")));folderLabel=Text(T("根目录","Root")+(folder.Length>0?" / "+folder:""));folderLabel.VerticalAlignment=VerticalAlignment.Center;Grid.SetColumn(folderLabel,1);pathbar.Children.Add(folderLabel);
-        searchBox=new TextBox{PlaceholderText=T("搜索当前目录","Search this folder"),Text=query};Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(searchBox,T("搜索当前目录","Search this folder"));searchBox.TextCompositionStarted+=(_,_)=>{searchComposing=true;searchTimer?.Stop();};searchBox.TextCompositionEnded+=(_,_)=>{searchComposing=false;ScheduleSearch();};searchBox.TextChanged+=(_,_)=>ScheduleSearch();Grid.SetColumn(searchBox,3);pathbar.Children.Add(searchBox);
-        var selectionActions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=8};
-        var selectAll=Button(T("全选","Select all"),(_,_)=>SelectAllRows());ToolTipService.SetToolTip(selectAll,T("选中当前目录的所有条目（Ctrl+A）","Select every item in this folder (Ctrl+A)"));selectionActions.Children.Add(selectAll);
-        Grid.SetColumn(selectionActions,2);pathbar.Children.Add(selectionActions);Grid.SetRow(pathbar,2);grid.Children.Add(pathbar);
-        var table=new Grid{MinWidth=680};table.RowDefinitions.Add(new(){Height=GridLength.Auto});table.RowDefinitions.Add(new(){Height=new GridLength(1,GridUnitType.Star)});
+        searchBox=new TextBox{PlaceholderText=T("搜索当前目录","Search this folder"),Text=query};Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(searchBox,T("搜索当前目录","Search this folder"));searchBox.TextCompositionStarted+=(_,_)=>{searchComposing=true;searchTimer?.Stop();};searchBox.TextCompositionEnded+=(_,_)=>{searchComposing=false;ScheduleSearch();};searchBox.TextChanged+=(_,_)=>ScheduleSearch();Grid.SetColumn(searchBox,2);pathbar.Children.Add(searchBox);Grid.SetRow(pathbar,2);grid.Children.Add(pathbar);
+        var table=new Grid{MinWidth=640};table.RowDefinitions.Add(new(){Height=GridLength.Auto});table.RowDefinitions.Add(new(){Height=new GridLength(1,GridUnitType.Star)});
         // Column-for-column copy of the row template, with a leading spacer for the
         // selection checkbox column that the ListView item container renders.
         var header=new Grid{ColumnSpacing=12,Margin=new Thickness(16,10,16,10)};
-        foreach(var width in new GridLength[]{new(21),new(26),new(1,GridUnitType.Star),new(100),new(100),new(145)})header.ColumnDefinitions.Add(new(){Width=width});
+        header.ColumnDefinitions.Add(new(){Width=new GridLength(21)});
+        header.ColumnDefinitions.Add(new(){Width=new GridLength(26)});
+        nameColumn=new(){Width=new GridLength(1,GridUnitType.Star)};
+        header.ColumnDefinitions.Add(nameColumn);
+        sizeColumn=new(){Width=new GridLength(sizeColumnWidth)};
+        packedColumn=new(){Width=new GridLength(packedColumnWidth)};
+        modifiedColumn=new(){Width=new GridLength(modifiedColumnWidth)};
+        header.ColumnDefinitions.Add(sizeColumn);header.ColumnDefinitions.Add(packedColumn);header.ColumnDefinitions.Add(modifiedColumn);
+        selectAllCheck=new CheckBox{MinWidth=0,Padding=new Thickness(0),Margin=new Thickness(-1.7,0,0,0),HorizontalAlignment=HorizontalAlignment.Left,VerticalAlignment=VerticalAlignment.Center,IsThreeState=false};
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(selectAllCheck,T("全选","Select all"));
+        ToolTipService.SetToolTip(selectAllCheck,T("选中当前目录的所有条目（Ctrl+A）","Select every item in this folder (Ctrl+A)"));
+        selectAllCheck.Checked+=(_,_)=>SetAllRowsSelected(true);selectAllCheck.Unchecked+=(_,_)=>SetAllRowsSelected(false);
+        header.Children.Add(selectAllCheck);
         sortHeaders.Clear();
         void AddHeader(string text,int column,ArchiveSortColumn key)
         {
-            var label=new Button{Content=text,FontSize=12,Padding=new Thickness(0,4,0,4),HorizontalAlignment=HorizontalAlignment.Stretch,HorizontalContentAlignment=HorizontalAlignment.Left,Background=new SolidColorBrush(Colors.Transparent),BorderThickness=new Thickness(0)};
+            var label=new Button{Content=text,FontSize=12,Padding=new Thickness(column>=3?8:0,4,0,4),HorizontalAlignment=HorizontalAlignment.Stretch,HorizontalContentAlignment=HorizontalAlignment.Left,Background=new SolidColorBrush(Colors.Transparent),BorderThickness=new Thickness(0)};
             label.Click+=(_,_)=>{if(sortColumn==key)sortDescending=!sortDescending;else{sortColumn=key;sortDescending=false;}UpdateSortHeaders();RefreshRows();};sortHeaders[key]=label;
             Grid.SetColumn(label,column);header.Children.Add(label);
         }
         AddHeader(T("名称","Name"),2,ArchiveSortColumn.Name);AddHeader(T("大小","Size"),3,ArchiveSortColumn.Size);AddHeader(T("压缩后","Packed"),4,ArchiveSortColumn.PackedSize);AddHeader(T("修改时间","Modified"),5,ArchiveSortColumn.Modified);UpdateSortHeaders();
+        AddColumnResize(header,2,nameColumn,width=>nameColumnWidth=width,120,800);
+        AddColumnResize(header,3,sizeColumn,width=>sizeColumnWidth=width,60,600);
+        AddColumnResize(header,4,packedColumn,width=>packedColumnWidth=width,60,600);
         table.Children.Add(header);
         fileList=new ListView{SelectionMode=ListViewSelectionMode.Multiple,IsMultiSelectCheckBoxEnabled=true,HorizontalContentAlignment=HorizontalAlignment.Stretch,CanDragItems=true};
         fileList.ItemContainerTransitions=[];
         fileList.ItemsPanel=(ItemsPanelTemplate)XamlReader.Load("<ItemsPanelTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\"><ItemsStackPanel/></ItemsPanelTemplate>");
-        fileList.ItemTemplate=(DataTemplate)XamlReader.Load("""
-        <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Grid MinHeight="48" ColumnSpacing="12" Padding="4,5"><Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/><ColumnDefinition Width="100"/><ColumnDefinition Width="100"/><ColumnDefinition Width="145"/></Grid.ColumnDefinitions><FontIcon Glyph="{Binding Glyph}" Visibility="{Binding FolderIconVisibility}" FontSize="20" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/><Image Source="{Binding Icon}" Visibility="{Binding FileIconVisibility}" Width="24" Height="24" Stretch="Uniform"/><TextBlock Grid.Column="1" Text="{Binding Name}" ToolTipService.ToolTip="{Binding FullPath}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/><TextBlock Grid.Column="2" Text="{Binding SizeText}" VerticalAlignment="Center" FontSize="12"/><TextBlock Grid.Column="3" Text="{Binding PackedSizeText}" VerticalAlignment="Center" FontSize="12"/><TextBlock Grid.Column="4" Text="{Binding ModifiedText}" VerticalAlignment="Center" FontSize="12"/></Grid></DataTemplate>
-        """);
+        fileList.ItemTemplate=CreateRowTemplate();
         fileList.DoubleTapped+=(_,e)=>{
-            var elements=VisualTreeHelper.FindElementsInHostCoordinates(e.GetPosition(null),fileList).ToList();
+            var point=e.GetPosition(fileList);
+            var elements=VisualTreeHelper.FindElementsInHostCoordinates(point,fileList).ToList();
             if(elements.Any(x=>x is CheckBox))return;
-            if(elements.OfType<FrameworkElement>().Select(x=>x.DataContext).OfType<ArchiveRow>().FirstOrDefault() is { } row)
+            if(RowAt(point) is { } row)
             {
                 e.Handled=true;var entry=row.Entry;var sourceArchive=archive;var sourceFolder=folder;
                 // Finish the routed gesture and ListView selection before the
                 // preview takes focus. There is only one activation per open.
                 DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,async()=>{if(page=="archive"&&archive==sourceArchive&&folder==sourceFolder)await ActivateRowAsync(entry);});
             }
-        };fileList.KeyDown+=async(_,e)=>{if(e.Key==VirtualKey.Enter&&fileList.SelectedItem is ArchiveRow row){e.Handled=true;await ActivateRowAsync(row.Entry);}else if(e.Key==VirtualKey.Delete){e.Handled=true;await DeleteSelectedAsync();}else if(e.Key==VirtualKey.A&&IsControlDown()){e.Handled=true;SelectAllRows();}};
+        };fileList.KeyDown+=async(_,e)=>{if(e.Key==VirtualKey.Enter&&fileList.SelectedItem is ArchiveRow row){e.Handled=true;await ActivateRowAsync(row.Entry);}else if(e.Key==VirtualKey.Delete){e.Handled=true;await DeleteSelectedAsync();}else if(e.Key==VirtualKey.C&&IsControlDown()){e.Handled=true;await CopySelectedAsync();}else if(e.Key==VirtualKey.A&&IsControlDown()){e.Handled=true;SelectAllRows();}};
         // WinUI owns gesture recognition and input tracking. A native data object
         // supplies 7-Zip-style delayed rendering through IDataObjectProvider.
         fileList.DragItemsStarting+=FileListDragItemsStarting;
@@ -337,10 +394,31 @@ public sealed partial class MainWindow:Window
         fileList.AllowDrop=true;
         fileList.AddHandler(UIElement.DragOverEvent,new DragEventHandler((_,e)=>UpdateDragOver(e)),true);
         fileList.AddHandler(UIElement.DropEvent,new DragEventHandler(FilesDropped),true);
-        fileList.SelectionChanged+=(_,_)=>QueueSelectionDetails();Grid.SetRow(fileList,1);table.Children.Add(fileList);
-        var workspace=new Grid{ColumnSpacing=16};workspace.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});workspace.ColumnDefinitions.Add(new(){Width=new GridLength(240)});
+        // Opened by hand, not as ContextFlyout. The framework would place the popup on the
+        // pointer, and that window's shadow then shows the wait or resize cursor.
+        var rowMenu=new MenuFlyout();
+        rowContextMenu=rowMenu;
+        fileList.PointerPressed+=(_,e)=>{
+            var pressed=e.GetCurrentPoint(fileList);
+            if(!pressed.Properties.IsRightButtonPressed)return;
+            if(RowAt(pressed.Position) is not {} row)return;
+            if(!fileList.SelectedItems.Contains(row)){fileList.SelectedItems.Clear();fileList.SelectedItems.Add(row);}
+            PopulateRowMenu(rowMenu);
+        };
+        fileList.ContextRequested+=(_,e)=>{
+            e.Handled=true;
+            if(!e.TryGetPosition(fileList,out var point)){ShowRowMenuFromKeyboard(rowMenu);return;}
+            if(RowAt(point) is not {} row)return;
+            if(!fileList.SelectedItems.Contains(row)){fileList.SelectedItems.Clear();fileList.SelectedItems.Add(row);}
+            PopulateRowMenu(rowMenu);
+            if(rowMenu.Items.Count==0)return;
+            ShowRowMenuClearOfPointer(rowMenu,point);
+        };
+        fileList.SelectionChanged+=(_,_)=>{QueueSelectionDetails();PopulateRowMenu(rowMenu);};Grid.SetRow(fileList,1);table.Children.Add(fileList);
+        var workspace=new Grid{ColumnSpacing=16};workspace.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});workspace.ColumnDefinitions.Add(new(){Width=new GridLength(200)});
         archiveTableScroll=new ScrollViewer{Content=table,HorizontalScrollMode=ScrollMode.Enabled,HorizontalScrollBarVisibility=ScrollBarVisibility.Auto,VerticalScrollMode=ScrollMode.Disabled,VerticalScrollBarVisibility=ScrollBarVisibility.Disabled,HorizontalContentAlignment=HorizontalAlignment.Stretch,VerticalContentAlignment=VerticalAlignment.Stretch};workspace.Children.Add(archiveTableScroll);
         archivePropertiesPanel=CreateArchivePropertiesPanel();Grid.SetColumn(archivePropertiesPanel,1);workspace.Children.Add(archivePropertiesPanel);Grid.SetRow(workspace,3);grid.Children.Add(workspace);
+        _=LoadArchiveCommentAsync(archivePropertiesPanel);
         countLabel=Text("",12);Grid.SetRow(countLabel,4);grid.Children.Add(countLabel);ShowContent(grid);RefreshRows();
     }
     private List<ArchiveEntry> SelectedEntries()
@@ -354,7 +432,34 @@ public sealed partial class MainWindow:Window
         var folders=selected.Where(e=>e.IsDirectory).Select(e=>e.NormalizedPath).ToArray();
         return entries.Where(e=>fileIndices.Contains(e.Index)||folders.Any(folder=>e.NormalizedPath==folder||e.NormalizedPath.StartsWith(folder+"/",StringComparison.Ordinal))).ToList();
     }
-    private async Task ActivateRowAsync(ArchiveEntry entry){if(entry.IsDirectory)SetFolder(entry.NormalizedPath);else await ShowPreviewAsync(entry);}
+    private static readonly HashSet<string> InstallerExtensions=new(StringComparer.OrdinalIgnoreCase){".exe",".msi",".msix",".appx",".msu"};
+    private static bool IsInstallerEntry(ArchiveEntry entry)=>!entry.IsDirectory&&!entry.IsLink&&InstallerExtensions.Contains(entry.Extension);
+    private async Task ActivateRowAsync(ArchiveEntry entry){if(entry.IsDirectory)SetFolder(entry.NormalizedPath);else if(IsInstallerEntry(entry))await RunEntryAsync(entry);else await ShowPreviewAsync(entry);}
+    // Running an installer from an archive is a deliberate double-click action; the file is
+    // extracted to a per-run temp folder so the installer's own files stay available while it runs.
+    private async Task RunEntryAsync(ArchiveEntry entry)
+    {
+        if(archive==null)return;
+        var confirm=Dialog(T("运行压缩包内的程序？","Run this program from the archive?"),
+            Text(T($"将先把 {entry.Name} 解压到临时目录，再启动它。只对可信来源的文件运行。",$"This extracts {entry.Name} to a temporary folder and then starts it. Only run files from sources you trust.")),T("运行","Run"));
+        confirm.DefaultButton=ContentDialogButton.Close;
+        if(await ShowDialogAsync(confirm)!=ContentDialogResult.Primary)return;
+        var currentArchive=archive;
+        var key=await EnsurePasswordAsync();
+        if(key is null)return;
+        var tempRoot=System.IO.Path.Combine(System.IO.Path.GetTempPath(),"New7z-run-"+Guid.NewGuid().ToString("N"));
+        string target;
+        try{Directory.CreateDirectory(tempRoot);target=ArchiveEngine.ResolveOutput(tempRoot,entry.NormalizedPath);}
+        catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);return;}
+        void Discard()=>_=Task.Run(()=>{try{if(Directory.Exists(tempRoot))Directory.Delete(tempRoot,true);}catch{};});
+        var queued=QueueJob(T("准备运行 ","Prepare to run ")+entry.Name,tempRoot,async(progress,cancellation)=>
+        {
+            await engine.ExtractAsync(currentArchive,[entry],tempRoot,ConflictPolicy.Rename,key,progress,cancellation);
+            if(!File.Exists(target))throw new IOException(T("解压后的文件不存在。","The extracted file is missing."));
+            Process.Start(new ProcessStartInfo(target){UseShellExecute=true,WorkingDirectory=System.IO.Path.GetDirectoryName(target)??tempRoot});
+        },false,ended:job=>{if(!job.Succeeded)Discard();});
+        if(!queued)Discard();
+    }
     private ContentDialog Dialog(string title,UIElement content,string? primary=null)=>new(){Title=title,Content=content,PrimaryButtonText=primary??T("确定","OK"),CloseButtonText=T("取消","Cancel"),DefaultButton=ContentDialogButton.Primary,XamlRoot=Root.XamlRoot,RequestedTheme=Root.RequestedTheme};
     private readonly SemaphoreSlim dialogGate=new(1,1);
     // WinUI allows only one ContentDialog at a time; a second ShowAsync (for example from a
@@ -505,6 +610,62 @@ public sealed partial class MainWindow:Window
             await engine.ModifyAsync(current,indices,[],key,p,ct);
         },false,ReloadArchiveAsync);
     }
+    private async Task CopySelectedAsync()
+    {
+        if(archive==null||page!="archive"||fileList==null)return;
+        // Copy in the order the rows are shown, not the order the user clicked them.
+        var rows=fileList.Items.OfType<ArchiveRow>().Where(row=>fileList.SelectedItems.Contains(row)).ToList();
+        if(rows.Count==0){Notify(T("请先选择要复制的文件或文件夹。","Select files or folders to copy first."));return;}
+        var selected=ExpandSelectedEntries(rows.Select(row=>row.Entry));
+        if(selected.Count==0){Notify(T("选中的内容为空，没有可以复制的文件。","The selection is empty; there is nothing to copy."));return;}
+        if(selected.Any(entry=>entry.IsLink)){Notify(T("暂不支持复制链接条目。","Link entries cannot be copied yet."),InfoBarSeverity.Warning);return;}
+        var currentArchive=archive;
+        var key=await EnsurePasswordAsync();
+        if(key is null)return;
+        var tempRoot=System.IO.Path.Combine(System.IO.Path.GetTempPath(),"New7z-copy-"+Guid.NewGuid().ToString("N"));
+        string[] rootPaths;
+        try
+        {
+            Directory.CreateDirectory(tempRoot);
+            var outputs=ArchiveEngine.ResolveOutputs(tempRoot,selected);
+            // Keyed by archive path: table rows for implicit folders share the same sentinel index.
+            var outputByPath=new Dictionary<string,string>(StringComparer.Ordinal);
+            for(var i=0;i<selected.Count;i++)outputByPath[selected[i].NormalizedPath]=outputs[i];
+            rootPaths=rows.Select(row=>outputByPath.TryGetValue(row.Entry.NormalizedPath,out var output)?output:ArchiveEngine.ResolveOutput(tempRoot,row.Entry.NormalizedPath)).ToArray();
+        }
+        catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);return;}
+        var label=rows.Count==1?rows[0].Name:T($"{rows.Count} 个项目",$"{rows.Count} items");
+        void Discard()=>_=Task.Run(()=>{try{if(Directory.Exists(tempRoot))Directory.Delete(tempRoot,true);}catch{};});
+        var queued=QueueJob(T("复制到剪贴板 ","Copy to clipboard ")+label,tempRoot,async(progress,cancellation)=>
+        {
+            await engine.ExtractAsync(currentArchive,selected,tempRoot,ConflictPolicy.Rename,key,progress,cancellation);
+            await SetClipboardFilesAsync(rootPaths);
+        },false,ended:job=>{if(!job.Succeeded)Discard();});
+        if(!queued)Discard();
+    }
+    // Explorer pastes a file list from CF_HDROP, so the clipboard carries the extracted files.
+    // Flush keeps them available if New7z exits before the paste.
+    private async Task SetClipboardFilesAsync(IReadOnlyList<string> paths)
+    {
+        var items=new List<IStorageItem>(paths.Count);
+        foreach(var path in paths)
+            items.Add(Directory.Exists(path)?await StorageFolder.GetFolderFromPathAsync(path):(IStorageItem)await StorageFile.GetFileFromPathAsync(path));
+        if(items.Count==0)throw new IOException(T("没有可以复制的文件。","There is nothing to copy."));
+        var package=new DataPackage{RequestedOperation=DataPackageOperation.Copy};
+        package.SetStorageItems(items);
+        // Clipboard access belongs on the window's dispatcher; another app can also hold it briefly.
+        var completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if(!DispatcherQueue.TryEnqueue(async()=>
+        {
+            for(var attempt=0;;attempt++)
+            {
+                try{Clipboard.SetContent(package);Clipboard.Flush();completion.TrySetResult();return;}
+                catch(COMException) when(attempt<4){await Task.Delay(120);}
+                catch(Exception ex){completion.TrySetException(ex);return;}
+            }
+        }))completion.TrySetException(new IOException(T("无法写入剪贴板。","The clipboard could not be updated.")));
+        await completion.Task;
+    }
     private static bool IsControlDown()=>(Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)&Windows.UI.Core.CoreVirtualKeyStates.Down)!=0;
     private void SelectAllRows()
     {
@@ -593,17 +754,14 @@ public sealed partial class MainWindow:Window
     private void FinishArchiveDrag()
     {
         if(dragVerificationReport!=null)File.AppendAllText(dragVerificationReport+".trace",engine.GetDragDiagnostics()+Environment.NewLine);
+        var transferred=dragData?.WasTransferred==true;
         dragData?.Dispose();dragData=null;
         dragJob=null;
-        if(dragTemp!=null){ScheduleTempCleanup(dragTemp);dragTemp=null;}
+        // A completed drop is still being copied by the target, and a large folder can
+        // take longer than any timer; keep the extracted files and let the next launch
+        // remove stale drag caches. Only a cancelled drag has nothing to copy.
+        if(dragTemp!=null){if(!transferred){try{if(Directory.Exists(dragTemp))Directory.Delete(dragTemp,true);}catch{}}dragTemp=null;}
         StatusText.Text=T("就绪","Ready");
-    }
-    private static void ScheduleTempCleanup(string path)
-    {
-        // Explorer may finish copying after the drop returns; retry later and keep files on sharing violations.
-        _=Task.Run(async()=>{
-            for(var attempt=0;attempt<3;attempt++){await Task.Delay(TimeSpan.FromMinutes(2));try{if(!Directory.Exists(path))return;Directory.Delete(path,true);return;}catch{}}
-        });
     }
     private bool QueueJob(string name,string destination,Func<IProgress<EngineProgress>,CancellationToken,Task> operation,bool openTasks=true,Func<Task>? completed=null,Action<ArchiveJob>? ended=null)
     {
@@ -661,8 +819,8 @@ public sealed partial class MainWindow:Window
         foreach(var job in jobs)
         {
             var card=Stack(10);card.Children.Add(Text(job.Title,16,true));card.Children.Add(Text(job.Destination,12));
-            var current=Text(job.CurrentItem,12);current.MinHeight=18;current.MaxLines=1;current.TextTrimming=TextTrimming.CharacterEllipsis;current.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];card.Children.Add(current);
-            var statusLine=new Grid();var status=Text(job.Status);statusLine.Children.Add(status);var percent=Text(job.PercentText,12);percent.HorizontalAlignment=HorizontalAlignment.Right;percent.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];statusLine.Children.Add(percent);card.Children.Add(statusLine);
+            var current=Text(job.CurrentItem,12);current.MinHeight=18;current.MaxLines=1;current.TextTrimming=TextTrimming.CharacterEllipsis;current.Opacity=0.65;card.Children.Add(current);
+            var statusLine=new Grid();var status=Text(job.Status);statusLine.Children.Add(status);var percent=Text(job.PercentText,12);percent.HorizontalAlignment=HorizontalAlignment.Right;percent.Opacity=0.65;statusLine.Children.Add(percent);card.Children.Add(statusLine);
             var bar=new ProgressBar{Minimum=0,Maximum=100,Value=job.Percent,IsIndeterminate=job.Active&&job.Indeterminate};card.Children.Add(bar);
             var transfer=Text(job.TransferText,12);transfer.MinHeight=18;card.Children.Add(transfer);
             var actions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=8};var cancel=Button(T("取消任务","Cancel task"),async(_,_)=>{var d=Dialog(T("取消任务？","Cancel this task?"),Text(T("已完成的文件将保留，当前未完成的临时文件会清理。","Completed files are kept; unfinished temporary files are cleaned up.")),T("取消任务","Cancel task"));d.DefaultButton=ContentDialogButton.Close;if(await ShowDialogAsync(d)==ContentDialogResult.Primary)job.Cancellation.Cancel();});cancel.IsEnabled=job.CanCancel;actions.Children.Add(cancel);
@@ -713,7 +871,12 @@ public sealed partial class MainWindow:Window
         UpdateTasksEmptyState();
     }
     private static string NormalizeTheme(string theme)=>theme switch{"浅色" or "light"=>"light","深色" or "dark"=>"dark","系统" or "system"=>"system",_=>"system"};
-    private void ApplyTheme(){Root.RequestedTheme=NormalizeTheme(settings.Theme) switch{"light"=>ElementTheme.Light,"dark"=>ElementTheme.Dark,_=>ElementTheme.Default};}
+    private void ApplyTheme()
+    {
+        var requested=NormalizeTheme(settings.Theme) switch{"light"=>ElementTheme.Light,"dark"=>ElementTheme.Dark,_=>ElementTheme.Default};
+        Root.RequestedTheme=requested;
+        WindowAppearance.ApplyCaptionButtons(AppWindow,requested==ElementTheme.Default?Root.ActualTheme:requested);
+    }
     private void ApplyIcon(){try{var path=settings.IconPath??System.IO.Path.Combine(AppContext.BaseDirectory,"Assets/logo.png");BrandImage.Source=new BitmapImage(new Uri(path));}catch{settings.IconPath=null;}}
     private async Task<string> PickPngAsync(string prefix)
     {
@@ -873,7 +1036,7 @@ public sealed partial class MainWindow:Window
         content.Children.Add(new FontIcon{Glyph=glyph,FontSize=20,VerticalAlignment=VerticalAlignment.Center});
         var text=Stack(2);text.VerticalAlignment=VerticalAlignment.Center;
         text.Children.Add(Text(title,16,true));
-        var detail=Text(description,12);detail.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];text.Children.Add(detail);
+        var detail=Text(description,12);detail.Opacity=0.65;text.Children.Add(detail);
         Grid.SetColumn(text,1);content.Children.Add(text);
         var chevron=new FontIcon{Glyph="",FontSize=12,VerticalAlignment=VerticalAlignment.Center};
         Grid.SetColumn(chevron,2);content.Children.Add(chevron);

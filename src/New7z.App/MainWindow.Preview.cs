@@ -65,7 +65,7 @@ public sealed partial class MainWindow
         var current=candidates.FindIndex(e=>e.Index==initial.Index);var sequence=0;
         byte[]? data=null;string? decoded=null;CancellationTokenSource? readCancellation=null;
 
-        var previewWindow=new Window{Title=initial.Name+" · New7z",SystemBackdrop=new MicaBackdrop()};
+        var previewWindow=new Window{Title=initial.Name+" · New7z"};
         previewWindowPointer=previewWindow;
         if(previewWindow.AppWindow.Presenter is OverlappedPresenter presenter){presenter.SetBorderAndTitleBar(true,false);presenter.IsMaximizable=true;}
         WindowAppearance.ApplyIcon(previewWindow);
@@ -128,16 +128,100 @@ public sealed partial class MainWindow
         SetPreviewWindowOwner(previewHwnd,-8,Hwnd); // GWLP_HWNDPARENT
 
         Image? image=null;BitmapImage? bitmap=null;
-        var textContent=new TextBox{Name="PreviewTextContent",VerticalAlignment=VerticalAlignment.Stretch,HorizontalAlignment=HorizontalAlignment.Stretch,VerticalContentAlignment=VerticalAlignment.Top,IsReadOnly=true,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,FontFamily=new FontFamily("Consolas"),FontSize=13,BorderThickness=new Thickness(0),Background=new SolidColorBrush(Microsoft.UI.Colors.Transparent)};
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(textContent,T("只读文本内容，带行号","Read-only text with line numbers"));
+        // Line numbers live in their own gutter so copying the text never includes them.
+        var lineNumbers=new Canvas{Name="PreviewLineNumbers",VerticalAlignment=VerticalAlignment.Stretch,IsHitTestVisible=false,Width=40};
+        var textContent=new TextBox{Name="PreviewTextContent",VerticalAlignment=VerticalAlignment.Stretch,HorizontalAlignment=HorizontalAlignment.Stretch,VerticalContentAlignment=VerticalAlignment.Top,IsReadOnly=true,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,FontFamily=new FontFamily("Consolas"),FontSize=13,BorderThickness=new Thickness(0),Background=new SolidColorBrush(Microsoft.UI.Colors.Transparent),Padding=new Thickness(8,6,8,6)};
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(textContent,T("只读文本内容","Read-only text"));
+        // The default state brushes would tint the whole reading area on hover; the
+        // preview surface is a fixed reading background instead.
+        foreach(var key in new[]{"TextControlBackgroundPointerOver","TextControlBackgroundFocused","TextControlBackgroundDisabled"})
+            textContent.Resources[key]=new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         ScrollViewer.SetVerticalScrollBarVisibility(textContent,ScrollBarVisibility.Auto);
+        var textLayout=new Grid{VerticalAlignment=VerticalAlignment.Stretch};
+        textLayout.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
+        textLayout.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});
+        textLayout.Children.Add(lineNumbers);
+        Grid.SetColumn(textContent,1);textLayout.Children.Add(textContent);
+        var lineStarts=Array.Empty<int>();
+        var lineLengths=Array.Empty<int>();
+        ScrollViewer? textScroller=null;
+        void UpdateLineNumbers()
+        {
+            lineNumbers.Children.Clear();
+            if(lineStarts.Length==0||textContent.ActualHeight<=0||textContent.Text.Length==0)return;
+            try
+            {
+                // The split keeps a trailing empty line whose start equals Text.Length,
+                // which GetRectFromCharacterIndex rejects.
+                int IndexOf(int line)=>Math.Clamp(lineStarts[line],0,textContent.Text.Length-1);
+                var sample=textContent.GetRectFromCharacterIndex(IndexOf(0),false);
+                var lineHeight=sample.Height>1?sample.Height:17;
+                // An empty line's own start index points at a newline, whose rect belongs
+                // to the line above; place it from its neighbours instead.
+                double LineTop(int line)
+                {
+                    if(lineLengths[line]>0)return textContent.GetRectFromCharacterIndex(lineStarts[line],false).Y;
+                    var previous=line-1;
+                    while(previous>=0&&lineLengths[previous]==0)previous--;
+                    if(previous<0)return textContent.GetRectFromCharacterIndex(0,false).Y;
+                    var y=textContent.GetRectFromCharacterIndex(lineStarts[previous],false).Y;
+                    var next=line+1;
+                    while(next<lineLengths.Length&&lineLengths[next]==0)next++;
+                    var step=lineHeight;
+                    if(next<lineLengths.Length)
+                    {
+                        var nextY=textContent.GetRectFromCharacterIndex(lineStarts[next],false).Y;
+                        if(next>previous+1)step=Math.Max(lineHeight,(nextY-y)/(next-previous));
+                    }
+                    return y+step*(line-previous);
+                }
+                int FindLine(double target,bool after)
+                {
+                    int low=0,high=lineStarts.Length-1;
+                    while(low<high)
+                    {
+                        var middle=after?(low+high+1)/2:(low+high)/2;
+                        var y=LineTop(middle);
+                        if(y<target)low=after?middle:middle+1;else high=after?middle-1:middle;
+                    }
+                    return low;
+                }
+                var first=FindLine(-lineHeight,false);
+                var last=FindLine(textContent.ActualHeight,true);
+                for(var i=first;i<=last&&i<lineStarts.Length;i++)
+                {
+                    var label=new TextBlock{Text=(i+1).ToString(),FontFamily=textContent.FontFamily,FontSize=textContent.FontSize,Opacity=0.65,TextAlignment=TextAlignment.Right,Width=lineNumbers.Width,Padding=new Thickness(0,0,8,0)};
+                    Canvas.SetLeft(label,0);Canvas.SetTop(label,LineTop(i)+4.6);
+                    lineNumbers.Children.Add(label);
+                }
+            }
+            catch{lineNumbers.Children.Clear();}
+        }
+        void AttachTextScroller()
+        {
+            if(textScroller!=null)return;
+            T? Find<T>(DependencyObject node) where T:DependencyObject
+            {
+                for(var i=0;i<VisualTreeHelper.GetChildrenCount(node);i++)
+                {
+                    var child=VisualTreeHelper.GetChild(node,i);
+                    if(child is T match)return match;
+                    if(Find<T>(child) is { } nested)return nested;
+                }
+                return null;
+            }
+            textScroller=Find<ScrollViewer>(textContent);
+            if(textScroller!=null)textScroller.ViewChanged+=(_,_)=>UpdateLineNumbers();
+        }
+        textContent.Loaded+=(_,_)=>{AttachTextScroller();UpdateLineNumbers();};
+        textContent.SizeChanged+=(_,_)=>DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,UpdateLineNumbers);
         void UpdateTextMatches()
         {
             if(data==null||!candidates[current].IsText)return;
-            var numbered=textContent.Text;var q=find.Text;
+            var text=textContent.Text;var q=find.Text;
             if(q.Length==0){matches.Text="";textContent.Select(textContent.SelectionStart,0);return;}
-            var offset=numbered.IndexOf(q,StringComparison.CurrentCultureIgnoreCase);var count=0;
-            for(var start=0;(start=numbered.IndexOf(q,start,StringComparison.CurrentCultureIgnoreCase))>=0;start+=q.Length)count++;
+            var offset=text.IndexOf(q,StringComparison.CurrentCultureIgnoreCase);var count=0;
+            for(var start=0;(start=text.IndexOf(q,start,StringComparison.CurrentCultureIgnoreCase))>=0;start+=q.Length)count++;
             matches.Text=count>0?T($"找到 {count} 处匹配，已选择第一处",$"Found {count} matches; selected the first"):T("没有找到匹配内容","No matches found");
             if(offset>=0)textContent.Select(offset,q.Length);else textContent.Select(textContent.SelectionStart,0);
         }
@@ -145,6 +229,7 @@ public sealed partial class MainWindow
         {
             textContent.TextWrapping=wrap.IsOn?TextWrapping.Wrap:TextWrapping.NoWrap;
             ScrollViewer.SetHorizontalScrollBarVisibility(textContent,wrap.IsOn?ScrollBarVisibility.Disabled:ScrollBarVisibility.Auto);
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,UpdateLineNumbers);
         }
         void RenderText()
         {
@@ -154,11 +239,25 @@ public sealed partial class MainWindow
                 decoded=ArchiveEngine.DecodeText(data,encoding.SelectedItem?.ToString()??T("自动","Auto"));
                 if(decoded.Contains('\0'))throw new InvalidDataException(T("内容可能为二进制文件，请更换编码或先解压查看。","The content looks binary. Try another encoding or extract the file first."));
                 var lines=decoded.Replace("\r\n","\n",StringComparison.Ordinal).Replace('\r','\n').Split('\n');
-                var numbered=string.Join(Environment.NewLine,lines.Take(100000).Select((line,i)=>$"{i+1,5}  {line}"));
+                var shown=lines.Take(100000).ToArray();
                 // Set the text after AcceptsReturn/TextWrapping so WinUI keeps every line.
-                UpdateTextWrapping();textContent.Text=numbered;
-                if(!host.Children.Contains(textContent)){host.Children.Clear();host.Children.Add(textContent);}
+                UpdateTextWrapping();textContent.Text=string.Join(Environment.NewLine,shown);
+                // The box may normalize line breaks, so derive the offsets from its own text.
+                var text=textContent.Text;
+                var starts=new List<int>();var lengths=new List<int>();var start=0;
+                for(var i=0;i<text.Length;i++)
+                {
+                    if(text[i] is not ('\r' or '\n'))continue;
+                    lengths.Add(i-start);starts.Add(start);
+                    if(text[i]=='\r'&&i+1<text.Length&&text[i+1]=='\n')i++;
+                    start=i+1;
+                }
+                lengths.Add(text.Length-start);starts.Add(start);
+                lineStarts=starts.ToArray();lineLengths=lengths.ToArray();
+                lineNumbers.Width=Math.Max(28,lineLengths.Length.ToString().Length*9+16);
+                if(!host.Children.Contains(textLayout)){host.Children.Clear();host.Children.Add(textLayout);}
                 UpdateTextMatches();
+                DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,UpdateLineNumbers);
                 metadata.Text=$"{ByteSize.Format((ulong)data.Length)} · {encoding.SelectedItem} · {T("只读文本","read-only text")}";
             }
             catch(Exception ex){host.Children.Clear();host.Children.Add(Text(ex.Message));}

@@ -48,6 +48,15 @@ internal sealed class NativeArchiveEngine
         finally { NativeMethods.NzFree(json); GC.KeepAlive(callback); }
     }, cancellation);
 
+    public Task<string> CommentAsync(string path, string? password = null, CancellationToken cancellation = default) => Task.Run(() =>
+    {
+        cancellation.ThrowIfCancellationRequested();
+        var callback = Callback(cancellation, null);
+        Check(NativeMethods.NzComment(System.IO.Path.GetFullPath(path), password, out var comment, callback, IntPtr.Zero), cancellation);
+        try { return Marshal.PtrToStringUni(comment) ?? ""; }
+        finally { NativeMethods.NzFree(comment); GC.KeepAlive(callback); }
+    }, cancellation);
+
     public Task<byte[]> ReadAsync(string path, ArchiveEntry entry, string? password = null, ulong limit = 32UL * 1024 * 1024, CancellationToken cancellation = default) => Task.Run(() =>
     {
         cancellation.ThrowIfCancellationRequested();
@@ -78,23 +87,11 @@ internal sealed class NativeArchiveEngine
     {
         if(selected.Count==0||roots.Count==0)throw new ArgumentException(Loc.T("没有可以拖动的压缩包内容。", "There is nothing to drag from this archive."));
         var root=System.IO.Path.GetFullPath(tempPath);Directory.CreateDirectory(root);EnsureNoReparse(root);
-        var used=new HashSet<string>(StringComparer.OrdinalIgnoreCase);var outputByIndex=new Dictionary<uint,string>();
         foreach(var entry in selected)
-        {
             if(entry.IsLink)throw new IOException(Loc.T($"不拖动链接条目：{entry.Path}", $"Link entries cannot be dragged: {entry.Path}"));
-            var output=ResolveOutput(root,entry.NormalizedPath);
-            if(!used.Add(output))
-            {
-                var parent=System.IO.Path.GetDirectoryName(output)!;var name=System.IO.Path.GetFileName(output);
-                var extension=entry.IsDirectory?"":System.IO.Path.GetExtension(name);var stem=entry.IsDirectory||extension.Length==0?name:name[..^extension.Length];
-                for(var suffix=2;;suffix++)
-                {
-                    var candidate=System.IO.Path.Combine(parent,$"{stem} ({suffix}){extension}");
-                    if(used.Add(candidate)){output=candidate;break;}
-                }
-            }
-            outputByIndex.Add(entry.Index,output);
-        }
+        var outputs=ResolveOutputs(root,selected);
+        var outputByIndex=new Dictionary<uint,string>();
+        for(var i=0;i<selected.Count;i++)outputByIndex.Add(selected[i].Index,outputs[i]);
         var rootPaths=roots.Select(entry=>outputByIndex.TryGetValue(entry.Index,out var output)?output:ResolveOutput(root,entry.NormalizedPath)).ToArray();
         ArgumentNullException.ThrowIfNull(prepare);
         var activity=ArchiveActivity.BeginTask();var state=GCHandle.Alloc(prepare);IntPtr session;
@@ -286,6 +283,30 @@ internal sealed class NativeArchiveEngine
         finally{GC.KeepAlive(itemCallback);GC.KeepAlive(callback);if(activeTemp!=null&&File.Exists(activeTemp))File.Delete(activeTemp);}
     },cancellation);
     private sealed record ExtractionItem(ArchiveEntry Entry,string Target,string Temp);
+    // Maps each entry to the file it extracts to under root. Archive paths that would land
+    // on the same case-insensitive name get a counter, same as Windows extraction does.
+    public static string[] ResolveOutputs(string root,IReadOnlyList<ArchiveEntry> entries)
+    {
+        var used=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var paths=new string[entries.Count];
+        for(var i=0;i<entries.Count;i++)
+        {
+            var entry=entries[i];
+            var output=ResolveOutput(root,entry.NormalizedPath);
+            if(!used.Add(output))
+            {
+                var parent=System.IO.Path.GetDirectoryName(output)!;var name=System.IO.Path.GetFileName(output);
+                var extension=entry.IsDirectory?"":System.IO.Path.GetExtension(name);var stem=entry.IsDirectory||extension.Length==0?name:name[..^extension.Length];
+                for(var suffix=2;;suffix++)
+                {
+                    var candidate=System.IO.Path.Combine(parent,$"{stem} ({suffix}){extension}");
+                    if(used.Add(candidate)){output=candidate;break;}
+                }
+            }
+            paths[i]=output;
+        }
+        return paths;
+    }
     public static string ResolveOutput(string root,string relative)
     {
         if(string.IsNullOrWhiteSpace(relative)||relative.Contains(':')||relative.StartsWith('/')||relative.StartsWith('\\'))throw new IOException(Loc.T("归档包含不安全的绝对路径。", "The archive contains an unsafe absolute path."));

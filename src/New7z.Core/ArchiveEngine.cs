@@ -17,6 +17,8 @@ public sealed class ArchiveEngine
         => (await RunAsync(new(){Action="list",Path=path,Password=password},null,cancellation).ConfigureAwait(false)).Entries??[];
     public async Task<byte[]> ReadAsync(string path,ArchiveEntry entry,string? password=null,ulong limit=32UL*1024*1024,CancellationToken cancellation=default)
         => (await RunAsync(new(){Action="read",Path=path,Entries=[entry],Password=password,ReadLimit=limit},null,cancellation).ConfigureAwait(false)).Bytes??[];
+    public async Task<string> CommentAsync(string path,string? password=null,CancellationToken cancellation=default)
+        => (await RunAsync(new(){Action="comment",Path=path,Password=password},null,cancellation).ConfigureAwait(false)).Comment??"";
     public async Task TestAsync(string path,string? password=null,IProgress<EngineProgress>? progress=null,CancellationToken cancellation=default)
         => await RunAsync(new(){Action="test",Path=path,Password=password},progress,cancellation).ConfigureAwait(false);
     public async Task CreateAsync(string output,IReadOnlyList<string> sources,string format="7z",int level=5,string? password=null,bool encryptNames=false,string? method=null,IProgress<EngineProgress>? progress=null,CancellationToken cancellation=default,long volumeSize=0)
@@ -31,6 +33,7 @@ public sealed class ArchiveEngine
     public static bool SupportsUpdate(string path)=>NativeArchiveEngine.SupportsUpdate(path);
     public static IReadOnlyList<SourceItem> ExpandSources(IReadOnlyList<string> sources,string? folder=null,CancellationToken cancellation=default)=>NativeArchiveEngine.ExpandSources(sources,folder,cancellation);
     public static string ResolveOutput(string root,string path)=>NativeArchiveEngine.ResolveOutput(root,path);
+    public static IReadOnlyList<string> ResolveOutputs(string root,IReadOnlyList<ArchiveEntry> entries)=>NativeArchiveEngine.ResolveOutputs(root,entries);
     public static string DecodeText(byte[] bytes,string encoding="自动")=>NativeArchiveEngine.DecodeText(bytes,encoding);
 
     internal static async Task<EngineMessage> RunAsync(EngineRequest request,IProgress<EngineProgress>? progress,CancellationToken cancellation)

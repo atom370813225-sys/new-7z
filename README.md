@@ -6,6 +6,16 @@
 
 [GitHub 下载](https://github.com/outsideoftime/new-7z/releases/latest) · [Gitee 下载](https://gitee.com/wgliangzero/new-7z/releases/tag/v1.0.11) · [操作说明](docs/操作说明.md) · [MIT 许可](LICENSE) · [第三方许可](THIRD-PARTY-NOTICES.md) · [安装与分发说明](docs/安装包发布.md)
 
+## 界面
+
+以下为 1.0.11 的实际界面截图，左列浅色主题，右列深色主题。
+
+| 浅色 | 深色 |
+|:--:|:--:|
+| ![主页（浅色）](docs/screenshots-app/01-主页.png) | ![主页（深色）](docs/screenshots-app/05-主页-深色.png) |
+| ![压缩包浏览（浅色）](docs/screenshots-app/02-压缩包浏览.png) | ![压缩包浏览（深色）](docs/screenshots-app/06-压缩包浏览-深色.png) |
+| ![解压进行中（浅色）](docs/screenshots-app/04-解压进行中.png) | ![解压进行中（深色）](docs/screenshots-app/07-解压进行中-深色.png) |
+
 ## 使用
 
 下载安装 EXE，按向导安装到当前用户目录。x64 安装包约 **30.30 MiB**，ARM64 安装包约 **28.58 MiB**，包含 .NET、WinUI 和自编译 7-Zip 引擎，可离线运行，无需安装完整 7-Zip。当前发行文件尚未进行发布者代码签名。详细操作见 [操作说明](docs/操作说明.md)。

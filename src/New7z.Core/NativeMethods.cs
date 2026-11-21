@@ -29,6 +29,7 @@ internal static class NativeMethods
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl)] internal static extern int NzArchiveDragWasTransferred(IntPtr session);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl)] internal static extern void NzReleaseArchiveDragData(IntPtr session);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzList(string path, string? password, out IntPtr json, ProgressCallback progress, IntPtr context);
+    [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzComment(string path, string? password, out IntPtr comment, ProgressCallback progress, IntPtr context);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzExtract(string path, string? password, uint index, string? output, ulong limit, out IntPtr data, out ulong size, ProgressCallback progress, IntPtr context);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzExtractChecked(string path,string? password,uint index,string? output,ulong limit,out IntPtr data,out ulong size,ProgressCallback progress,IntPtr context,string expected);
     [DllImport(Dll, CallingConvention=CallingConvention.Cdecl, CharSet=CharSet.Unicode)] internal static extern int NzExtractBatch(string path,string? password,

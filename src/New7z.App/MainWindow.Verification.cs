@@ -1,8 +1,10 @@
 using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using New7z.Core;
 using Windows.Storage.Streams;
 using static New7z.Core.Loc;
 
@@ -47,6 +49,72 @@ public sealed partial class MainWindow
             await File.WriteAllTextAsync(reportPath,JsonSerializer.Serialize(report,AppJsonContext.Default.DictionaryStringString));
         }),true);
         Grid.SetRowSpan(target,Root.RowDefinitions.Count);Root.Children.Add(target);
+    }
+    // Opt-in diagnostic: copies a real archive row through the same clipboard path the
+    // context menu uses, then compares the copied content with the archive entry.
+    private async Task VerifyCopyAsync(string input,string reportPath)
+    {
+        var report=new Dictionary<string,string>();
+        try
+        {
+            await OpenArchiveAsync(input,false);
+            if(archive==null||entries.Count==0)throw new IOException("Archive UI did not load.");
+            folder="";ShowArchive();await Task.Delay(150);Root.UpdateLayout();
+            var row=fileList?.Items.OfType<ArchiveRow>().FirstOrDefault()??throw new IOException("No archive row rendered to copy.");
+            fileList!.SelectedItems.Clear();fileList.SelectedItems.Add(row);
+            await CopySelectedAsync();
+            for(var wait=0;wait<600&&jobs.Any(job=>job.Active);wait++)await Task.Delay(50);
+            var failed=jobs.FirstOrDefault(job=>!job.Active&&job.Title.StartsWith(T("复制到剪贴板 ","Copy to clipboard "),StringComparison.Ordinal));
+            if(failed!=null)throw new IOException("Copy task failed: "+failed.Status);
+            var content=Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
+            if(!content.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems))throw new IOException("The clipboard does not carry file items.");
+            var items=await content.GetStorageItemsAsync();
+            if(items.Count!=1||items[0].Name!=row.Name)throw new IOException("Clipboard items do not match the selected row.");
+            var copied=items[0].Path;
+            if(row.Entry.IsDirectory)
+            {
+                var prefix=row.Entry.NormalizedPath+"/";
+                var expected=entries.Where(entry=>!entry.IsDirectory&&entry.NormalizedPath.StartsWith(prefix,StringComparison.Ordinal))
+                    .Select(entry=>entry.NormalizedPath[prefix.Length..]).OrderBy(path=>path,StringComparer.Ordinal).ToArray();
+                var actual=Directory.EnumerateFiles(copied,"*",SearchOption.AllDirectories)
+                    .Select(path=>System.IO.Path.GetRelativePath(copied,path).Replace('\\','/')).OrderBy(path=>path,StringComparer.Ordinal).ToArray();
+                if(!expected.SequenceEqual(actual))throw new IOException("Copied folder content differs from the archive entries.");
+            }
+            else
+            {
+                var copiedBytes=await File.ReadAllBytesAsync(copied);
+                var expectedBytes=await engine.ReadAsync(input,row.Entry);
+                if(!copiedBytes.SequenceEqual(expectedBytes))throw new IOException("The copied file does not match the archive entry.");
+            }
+            report["Result"]="PASS";report["Copied"]=row.FullPath;report["ClipboardPath"]=copied;
+        }
+        catch(Exception ex){report["Result"]="FAIL";report["Error"]=ex.ToString();}
+        await File.WriteAllTextAsync(reportPath,JsonSerializer.Serialize(report,AppJsonContext.Default.DictionaryStringString));
+        Close();
+    }
+    // Opt-in diagnostic: opens the row context menu in place so a capture tool can
+    // record how it renders without injecting desktop input.
+    private async Task ShowRowMenuForCaptureAsync(string input,string reportPath)
+    {
+        var report=new Dictionary<string,string>();
+        try
+        {
+            await OpenArchiveAsync(input,false);
+            folder="";ShowArchive();await Task.Delay(300);Root.UpdateLayout();
+            var folderEntry=entries.FirstOrDefault(entry=>entry.IsDirectory);
+            if(folderEntry!=null){SetFolder(folderEntry.NormalizedPath);await Task.Delay(300);Root.UpdateLayout();}
+            var row=fileList?.Items.OfType<ArchiveRow>().FirstOrDefault(candidate=>!candidate.Entry.IsDirectory&&(candidate.Entry.IsImage||candidate.Entry.IsText))??fileList?.Items.OfType<ArchiveRow>().FirstOrDefault()??throw new IOException("No archive row to show a menu for.");
+            fileList!.SelectedItems.Clear();fileList.SelectedItems.Add(row);
+            var menu=new MenuFlyout();PopulateRowMenu(menu);
+            var anchor=fileList.ContainerFromItem(row) as FrameworkElement??fileList;
+            menu.ShowAt(anchor,new FlyoutShowOptions{Placement=FlyoutPlacementMode.BottomEdgeAlignedLeft});
+            report["Result"]="PASS";report["Row"]=row.FullPath;
+            report["Menu"]=string.Join(" | ",menu.Items.OfType<MenuFlyoutItem>().Select(item=>item.Text+(item.IsEnabled?"":"(disabled)")));
+            await File.WriteAllTextAsync(reportPath,JsonSerializer.Serialize(report,AppJsonContext.Default.DictionaryStringString));
+            await Task.Delay(TimeSpan.FromSeconds(40));
+        }
+        catch(Exception ex){report["Result"]="FAIL";report["Error"]=ex.ToString();await File.WriteAllTextAsync(reportPath,JsonSerializer.Serialize(report,AppJsonContext.Default.DictionaryStringString));}
+        Close();
     }
     // Explicit local diagnostic entry point for validating the published/trimmed app.
     // It does not send desktop input, change preferences or invoke system registration.
@@ -149,7 +217,7 @@ public sealed partial class MainWindow
             QueueJob(retryName,"verification target",(_,_)=>++attempts==1?Task.FromException(new IOException("expected retry probe")):Task.CompletedTask,false);
             for(var wait=0;wait<600&&jobs.Any(job=>job.Title==retryName&&job.Active);wait++)await Task.Delay(50);
             var retryJob=jobs.SingleOrDefault(job=>job.Title==retryName);
-            if(retryJob?.Retry==null||retryJob.Active)throw new IOException("Failed task did not retain its retry action.");
+            if(retryJob?.Retry==null||retryJob.Active)throw new IOException($"Failed task did not retain its retry action. job={(retryJob==null?"missing":"present")} active={retryJob?.Active} attempts={attempts}");
             retryJob.Retry();
             for(var wait=0;wait<600&&jobs.Any(job=>job.Title==retryName&&job.Active);wait++)await Task.Delay(50);
             if(attempts!=2||jobs.Any(job=>job.Title==retryName))throw new IOException("Task retry did not rerun the original operation and clear success.");
@@ -186,8 +254,27 @@ public sealed partial class MainWindow
             var archiveProperties=ArchiveProperties();
             if(archiveProperties.Any(string.IsNullOrEmpty))throw new IOException("Archive properties did not render.");
             if(archiveFileCountText!.Text!=entries.Count(entry=>!entry.IsDirectory).ToString("N0")||archivePackedSizeText!.Text!=New7z.Core.ByteSize.Format((ulong)new FileInfo(input).Length))throw new IOException("Properties do not describe the whole archive.");
+            var expectedComment=(await engine.CommentAsync(input)).Trim();
+            var commentBlock=archivePropertiesPanel.FindName("CommentBlock") as StackPanel;
+            var commentText=archivePropertiesPanel.FindName("CommentText") as TextBlock;
+            if(expectedComment.Length>0)
+            {
+                for(var wait=0;wait<100&&commentBlock!.Visibility!=Visibility.Visible;wait++)await Task.Delay(50);
+                if(commentBlock!.Visibility!=Visibility.Visible||commentText?.Text!=expectedComment)throw new IOException("The archive comment is not shown with the archive properties.");
+                report["ArchiveComment"]="ZIP/RAR archive comment shown with the archive sizes";
+            }
+            else if(commentBlock!.Visibility==Visibility.Visible)throw new IOException("A comment block is shown for an archive without a comment.");
             fileList.SelectAll();UpdateSelectionDetails();
             if(!ArchiveProperties().SequenceEqual(archiveProperties))throw new IOException("Selection changed the whole-archive properties.");
+            if(selectAllCheck==null)throw new IOException("The header select-all checkbox is missing.");
+            if(fileList.Items.Count>0)
+            {
+                selectAllCheck.IsChecked=false;
+                if(fileList.SelectedItems.Count!=0)throw new IOException("Clearing the header select-all checkbox did not clear the selection.");
+                selectAllCheck.IsChecked=true;
+                if(fileList.SelectedItems.Count!=fileList.Items.Count)throw new IOException("Checking the header select-all checkbox did not select every row.");
+                report["SelectAllCheckBox"]="header checkbox selects and clears every visible row";
+            }
             SetFolder("");SetFolder(originalFolder);
             if(!ReferenceEquals(originalList,fileList))throw new IOException("Folder navigation recreated the list.");
             query="no-such-name-"+Guid.NewGuid().ToString("N");RefreshRows();if(fileList.Items.Count!=0)throw new IOException("No-result search did not clear rows.");
@@ -201,14 +288,84 @@ public sealed partial class MainWindow
             void ReadButtons(DependencyObject node){if(node is Button button&&button.Content is string label)archiveButtons.Add(label);for(var i=0;i<VisualTreeHelper.GetChildrenCount(node);i++)ReadButtons(VisualTreeHelper.GetChild(node,i));}
             ReadButtons(ContentHost);
             if(archiveButtons.Contains(T("属性","Properties")))throw new IOException("The obsolete Properties button is still present.");
-            if(archivePropertiesPanel?.ActualWidth!=240||archivePropertiesPanel.BorderThickness.Left!=1)throw new IOException("The archive sidebar or divider did not render.");
+            if(!archiveButtons.Contains(T("复制选中","Copy selected")))throw new IOException("The archive toolbar is missing the copy selected command.");
+            report["ArchiveCopyCommand"]="toolbar exposes copy selected beside extract selected";
+            if(archivePropertiesPanel?.ActualWidth!=200||archivePropertiesPanel.BorderThickness.Left!=1)throw new IOException("The archive sidebar or divider did not render.");
             var windowSize=AppWindow.Size;var scale=Root.XamlRoot.RasterizationScale;
             AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(900*scale),(int)(680*scale)));
             await Task.Delay(250);Root.UpdateLayout();
-            if(archivePropertiesPanel.ActualWidth!=240||archivePropertiesPanel.Visibility!=Visibility.Visible||archiveTableScroll!.ViewportWidth<=0||archiveTableScroll.ScrollableWidth<=0)throw new IOException("Narrow layout hid the archive sidebar or lost horizontal table scrolling.");
+            Button? ArchiveButton(string label)
+            {
+                Button? found=null;
+                void Walk(DependencyObject node)
+                {
+                    if(found!=null)return;
+                    if(node is Button button&&button.Content is string text&&text==label)found=button;
+                    for(var i=0;i<VisualTreeHelper.GetChildrenCount(node);i++)Walk(VisualTreeHelper.GetChild(node,i));
+                }
+                Walk(ContentHost);return found;
+            }
+
+            foreach(var label in new[]{T("复制选中","Copy selected"),T("新建压缩","New archive")})
+            {
+                var button=ArchiveButton(label)??throw new IOException("Archive command button is missing at 900 DIP: "+label);
+                var bounds=button.TransformToVisual(ContentHost).TransformBounds(new Windows.Foundation.Rect(0,0,button.ActualWidth,button.ActualHeight));
+                if(bounds.Right>ContentHost.ActualWidth+0.5)throw new IOException("Archive command button overflows the content area at 900 DIP: "+label);
+            }
+            report["NarrowCommands"]="primary and secondary commands stay inside the content area at 900 DIP";
+            if(archivePropertiesPanel.ActualWidth!=200||archivePropertiesPanel.Visibility!=Visibility.Visible||archiveTableScroll!.ViewportWidth<=0||archiveTableScroll.ScrollableWidth<=0)throw new IOException("Narrow layout hid the archive sidebar or lost horizontal table scrolling.");
             AppWindow.Resize(windowSize);
+            await Task.Delay(250);Root.UpdateLayout();
+            if(archiveTableScroll!.ScrollableWidth>0.5)throw new IOException("The archive table scrolls horizontally at the default window size.");
+            report["DefaultWidthTable"]="the archive table fits the default window without a horizontal scrollbar";
             report["ArchiveView"]="sort preserves selection; folder navigation preserves ListView; empty search; decoded file type icons";
-            report["ArchiveProperties"]="whole-archive totals remain stable during selection, navigation and search; actual archive file size; no Properties button; 240 DIP sidebar with a vertical divider remains visible at 900 DIP, with horizontal table scrolling";
+            var rowMenu=rowContextMenu??throw new IOException("The archive row context menu is missing.");
+            var menuRow=fileList.Items.OfType<ArchiveRow>().FirstOrDefault()??throw new IOException("No archive row to build the context menu for.");
+            fileList.SelectedItems.Clear();fileList.SelectedItems.Add(menuRow);
+            PopulateRowMenu(rowMenu);
+            var menuLabels=rowMenu.Items.OfType<MenuFlyoutItem>().Select(item=>item.Text).ToList();
+            var expectedMenuLabels=new List<string>{T("解压到…","Extract to…"),T("复制","Copy"),T("复制文件名","Copy file name"),T("复制包内路径","Copy archive path"),T("删除","Delete"),T("属性","Properties")};
+            if(!menuRow.Entry.IsDirectory)expectedMenuLabels.Add(T("预览","Preview"));
+            foreach(var label in expectedMenuLabels)
+                if(!menuLabels.Contains(label))throw new IOException("The archive row context menu is missing: "+label);
+            if(menuRow.Entry.IsDirectory&&menuLabels.Contains(T("预览","Preview")))throw new IOException("The folder context menu offers preview.");
+            var archiveFileName=System.IO.Path.GetFileName(archive!)!;
+            if(TextForRows([menuRow],false,archiveFileName)!=menuRow.Name)throw new IOException("Copied file name text mismatch.");
+            if(TextForRows([menuRow],true,archiveFileName)!=archiveFileName+"!/"+menuRow.FullPath)throw new IOException("Copied archive path text mismatch.");
+            if(!PropertiesLines([menuRow],entries,archiveFileName).Any(pair=>pair.Value.Contains(menuRow.FullPath,StringComparison.Ordinal)))throw new IOException("Entry properties do not include the archive path.");
+            var menuFolder=menuRow.Entry.IsDirectory?menuRow.Entry:entries.FirstOrDefault(entry=>entry.IsDirectory);
+            if(menuFolder!=null)
+            {
+                // Enter a folder so the file and multi-selection menus are exercised on real rows.
+                SetFolder(menuFolder.NormalizedPath);
+                var fileRows=fileList.Items.OfType<ArchiveRow>().Where(row=>!row.Entry.IsDirectory).ToList();
+                var previewRow=fileRows.FirstOrDefault(row=>row.Entry.IsImage||row.Entry.IsText);
+                if(previewRow!=null)
+                {
+                    fileList.SelectedItems.Clear();fileList.SelectedItems.Add(previewRow);
+                    PopulateRowMenu(rowMenu);
+                    var previewItem=rowMenu.Items.OfType<MenuFlyoutItem>().FirstOrDefault(item=>item.Text==T("预览","Preview"))??throw new IOException("The file context menu is missing preview.");
+                    if(!previewItem.IsEnabled)throw new IOException("Preview is disabled for a text or image fixture.");
+                    if(!PropertiesLines([previewRow],entries,archiveFileName).Any(pair=>pair.Label==T("包内路径","Archive path")))throw new IOException("File properties do not report the archive path.");
+                }
+                if(fileRows.Count>=2)
+                {
+                    fileList.SelectedItems.Clear();fileList.SelectedItems.Add(fileRows[0]);fileList.SelectedItems.Add(fileRows[1]);
+                    PopulateRowMenu(rowMenu);
+                    menuLabels=rowMenu.Items.OfType<MenuFlyoutItem>().Select(item=>item.Text).ToList();
+                    if(!menuLabels.Contains(T("解压选中的 2 项…","Extract 2 selected items…"))||!menuLabels.Contains(T("查看所选属性","Properties of selection")))throw new IOException("The multi-selection context menu is missing extract or properties.");
+                    if(menuLabels.Contains(T("预览","Preview")))throw new IOException("The multi-selection context menu still offers preview.");
+                    if(!PropertiesLines(fileList.SelectedItems.Cast<ArchiveRow>().ToList(),entries,archiveFileName).Any(pair=>pair.Label==T("已选择","Selected")))throw new IOException("Multi-selection properties do not report the selection count.");
+                }
+                SetFolder("");
+            }
+            report["ArchiveContextMenu"]="row menu adapts to folder, single file and multi selection and exposes preview, extract, copy, text copy, delete and properties";
+            foreach(var (x,y,width,height) in new[]{(40d,40d,800d,600d),(760d,40d,800d,600d),(40d,560d,800d,600d),(760d,560d,800d,600d),(400d,300d,800d,600d)})
+                if(!MenuPointerStaysClear(x,y,width,height))throw new IOException($"The row menu would open under the pointer at {x},{y}.");
+            report["MenuCursor"]="row menu opens clear of the pointer, including the popup shadow";
+            if(!IsInstallerEntry(new ArchiveEntry{Path="setup.exe"})||!IsInstallerEntry(new ArchiveEntry{Path="package.msi"})||!IsInstallerEntry(new ArchiveEntry{Path="tool.msix"})||IsInstallerEntry(new ArchiveEntry{Path="readme.txt"})||IsInstallerEntry(new ArchiveEntry{Path="folder.exe",IsDirectory=true})||IsInstallerEntry(new ArchiveEntry{Path="link.msi",IsLink=true}))throw new IOException("Installer detection is wrong.");
+            report["InstallerRun"]="exe/msi/msix/appx/msu rows run after extraction; other files keep preview; folders and links are excluded";
+            report["ArchiveProperties"]="whole-archive totals remain stable during selection, navigation and search; actual archive file size; no Properties button; 200 DIP sidebar with a vertical divider remains visible at 900 DIP, with horizontal table scrolling";
             var text=entries.FirstOrDefault(e=>!e.IsDirectory&&e.IsText);
             if(text!=null)
             {
@@ -254,15 +411,25 @@ public sealed partial class MainWindow
                 await Task.Delay(50);root.UpdateLayout();
                 if(session.IsCompleted){await session;throw new IOException("Preview closed before loading content.");}
                 host=Find<Grid>(root,"PreviewContentHost");
-                if(host?.Children.Any(child=>entry.IsText?child is TextBox:child is ScrollViewer)==true)break;
+                if(host?.Children.Count==1&&(entry.IsText?Find<TextBox>(root,"PreviewTextContent")!=null:host.Children[0] is ScrollViewer))break;
             }
-            if(host?.Children.Count!=1||!(entry.IsText?host.Children[0] is TextBox:host.Children[0] is ScrollViewer))throw new IOException("Preview did not load its content.");
+            if(host==null||host.Children.Count!=1)throw new IOException("Preview did not load its content.");
             var content=host.Children[0];
+            if(entry.IsImage&&content is not ScrollViewer)throw new IOException("Image preview did not load its content.");
+            if(entry.IsText&&content is not Grid)throw new IOException("Text preview did not load its content.");
             await ShowPreviewAsync(entry);
             if(!ReferenceEquals(window,previewWindowPointer))throw new IOException("Repeated activation created a second preview window.");
             if(entry.IsText)
             {
-                if(content is not TextBox text||text.Text.Length==0)throw new IOException("Text preview is empty.");
+                var text=Find<TextBox>(root,"PreviewTextContent")??throw new IOException("Text preview is missing its content box.");
+                if(text.Text.Length==0)throw new IOException("Text preview is empty.");
+                var gutter=Find<Canvas>(root,"PreviewLineNumbers")??throw new IOException("Text preview is missing its line-number gutter.");
+                for(var wait=0;wait<40&&gutter.Children.Count==0;wait++){await Task.Delay(50);root.UpdateLayout();}
+                if(gutter.Children.Count==0)throw new IOException("Text preview did not render line numbers.");
+                var bytes=await engine.ReadAsync(archive!,entry);
+                var decoded=New7z.Core.ArchiveEngine.DecodeText(bytes).Replace("\r\n","\n").Replace('\r','\n').Split('\n');
+                string Normalize(string value)=>value.Replace("\r\n","\n").Replace('\r','\n');
+                if(Normalize(text.Text)!=string.Join("\n",decoded.Take(100000)))throw new IOException("Preview text still contains line-number prefixes instead of a separate gutter.");
                 var find=Find<TextBox>(root,"PreviewFind")??throw new IOException("Preview search field is missing.");
                 var bodyHeight=host.ActualHeight;
                 find.Text="no-such-preview-text-"+Guid.NewGuid().ToString("N");root.UpdateLayout();

@@ -467,6 +467,18 @@ API int __cdecl NzCreateArchiveDragDataIsolated(IUnknown* package,HWND owner,con
 }
 API int __cdecl NzArchiveDragWasTransferred(DragDataObject* session){return session&&session->wasTransferred(DROPEFFECT_NONE)?1:0;}
 API void __cdecl NzReleaseArchiveDragData(DragDataObject* session){if(session)session->Release();}
+API int __cdecl NzComment(const wchar_t* path,const wchar_t* password,wchar_t** comment,Progress progress,void* ctx){
+  if(!comment)return E_POINTER;*comment=nullptr;
+  try{
+    Archive a(password,progress,ctx);HRESULT hr=a.open(path);if(FAILED(hr))return hr;
+    Variant prop;hr=a.archive->GetArchiveProperty(kpidComment,&prop.v);if(FAILED(hr))return hr;
+    std::wstring text;
+    if(prop.v.vt==VT_BSTR&&prop.v.bstrVal)text=prop.v.bstrVal;
+    const auto n=(text.size()+1)*sizeof(wchar_t);
+    *comment=static_cast<wchar_t*>(CoTaskMemAlloc(n));if(!*comment)return E_OUTOFMEMORY;
+    memcpy(*comment,text.c_str(),n);return S_OK;
+  }catch(...){return E_OUTOFMEMORY;}
+}
 API int __cdecl NzList(const wchar_t* path,const wchar_t* password,wchar_t** json,Progress progress,void* ctx){*json=nullptr;try{Archive a(password,progress,ctx);HRESULT hr=a.open(path);if(FAILED(hr))return hr;UInt32 count=0;if(FAILED(hr=a.archive->GetNumberOfItems(&count)))return hr;if(count>1000000)return SizeLimit;std::wstring text=L"[";for(UInt32 i=0;i<count;i++){if(FAILED(a.status.report(i)))return E_ABORT;Variant name,size,packed,dir,encrypted,time,link,hard,attrs;a.archive->GetProperty(i,kpidPath,&name.v);a.archive->GetProperty(i,kpidSize,&size.v);a.archive->GetProperty(i,kpidPackSize,&packed.v);a.archive->GetProperty(i,kpidIsDir,&dir.v);a.archive->GetProperty(i,kpidEncrypted,&encrypted.v);a.archive->GetProperty(i,kpidMTime,&time.v);a.archive->GetProperty(i,kpidSymLink,&link.v);a.archive->GetProperty(i,kpidHardLink,&hard.v);a.archive->GetProperty(i,kpidAttrib,&attrs.v);if(i)text+=L",";UInt64 ft=time.v.vt==VT_FILETIME?(UInt64(time.v.filetime.dwHighDateTime)<<32)|time.v.filetime.dwLowDateTime:0;text+=L"{\"Index\":"+std::to_wstring(i)+L",\"Path\":"+quote(name.v.vt==VT_BSTR?name.v.bstrVal:L"content")+L",\"Size\":"+std::to_wstring(number(size.v))+L",\"PackedSize\":"+(packed.v.vt==VT_EMPTY?L"null":std::to_wstring(number(packed.v)))+L",\"IsDirectory\":"+(propBool(dir.v)?L"true":L"false")+L",\"Encrypted\":"+(propBool(encrypted.v)?L"true":L"false")+L",\"IsLink\":"+(archiveLink(a.archive.p,i)?L"true":L"false")+L",\"FileTime\":"+std::to_wstring(ft)+L"}";}text+=L"]";const auto n=(text.size()+1)*sizeof(wchar_t);*json=static_cast<wchar_t*>(CoTaskMemAlloc(n));if(!*json)return E_OUTOFMEMORY;memcpy(*json,text.c_str(),n);return S_OK;}catch(...){return E_OUTOFMEMORY;}}
 static bool matchesArchiveName(IInArchive* archive,UInt32 index,const wchar_t* expected){
   if(!expected)return true;

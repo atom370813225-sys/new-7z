@@ -1,6 +1,6 @@
 # New7z UX Contract
 
-2026-11-13 原生应用补充（实现与证据：[稳定性与安全加固](docs/稳定性与安全加固.md)）：归档列表由 `MainWindow.ArchiveView.cs` 与 `ArchiveSorting` 管理排序、过滤、选择恢复和属性；采用 WinUI 虚拟化 ListView 内部滚动，搜索与路径属于当前窗口内的临时状态。当前目录切换保留排序，排序保留仍可见的选择，过滤后的选择仅覆盖可见结果。按用户要求，右侧常显整包属性，通过竖线与文件列表隔开，不再提供「属性」按钮或弹窗。文件数量和原始大小汇总整包文件，压缩后大小读取归档文件实际字节数；选择、目录和搜索不改变统计。属性栏可纵向滚动并复制完整值，窄窗口通过左侧表格横向滚动保留全部列和右侧属性。任务更新复用卡片，后台读取共享状态，不因进度改变内容层级。文件图标映射由 `FileTypeIcons` 独占，配色与尺寸见 DESIGN.md。原型继续使用示例数据，原生诊断与原型浏览器测试分别提供证据。
+2026-11-13 原生应用补充（实现与证据：[稳定性与安全加固](docs/稳定性与安全加固.md)）：归档列表由 `MainWindow.ArchiveView.cs` 与 `ArchiveSorting` 管理排序、过滤、选择恢复和属性；采用 WinUI 虚拟化 ListView 内部滚动，搜索与路径属于当前窗口内的临时状态。当前目录切换保留排序，排序保留仍可见的选择，过滤后的选择仅覆盖可见结果。按用户要求，右侧常显整包属性，通过竖线与文件列表隔开，不再提供「属性」按钮；条目级属性改为列表右键菜单中的「属性」，用只读对话框显示。文件数量和原始大小汇总整包文件，压缩后大小读取归档文件实际字节数；选择、目录和搜索不改变统计。属性栏可纵向滚动并复制完整值，窄窗口通过左侧表格横向滚动保留全部列和右侧属性。任务更新复用卡片，后台读取共享状态，不因进度改变内容层级。文件图标映射由 `FileTypeIcons` 独占，配色与尺寸见 DESIGN.md。原型继续使用示例数据，原生诊断与原型浏览器测试分别提供证据。
 
 首轮设计候选，2026-11-03。范围：本地交互原型，不连接压缩引擎。用户任务以 [功能设计](docs/功能设计.md) 为提案来源，已存在能力以 SDK 目录与 `7zr.exe i` 为证据。
 
@@ -33,7 +33,7 @@
 | Native Transfer Progress | NativeArchiveEngine / TransferTracker / ArchiveJob | DESIGN.md | 提取字节进度、速度与剩余时间；计数进度不展示字节速度；卡片行高稳定 | StaleEntryTests / New7z.Settings.Tests |
 | Native Task Retention | MainWindow.CompleteJob / SharedTaskStore | 当前用户要求 / 本文件 | 成功后自动移除、不保留历史；失败与取消保留；读取时清理旧成功快照 | New7z.TaskStore.Tests / --verify-ui Tasks |
 | Native Split Volumes | VolumeSizeField / ArchiveVolumes / ArchiveEngine | 本文件 / DESIGN.md | 主窗口与 Shell 压缩表单共享预设、自定义与校验；7z/ZIP/TAR；默认不分卷；MiB/GiB 为二进制；自定义至少 1 MiB | VolumeTests / --verify-ui Volumes / test-icons.ps1 |
-| Native Archive Properties | MainWindow.ArchiveView.CreateArchivePropertiesPanel | 本文件 / DESIGN.md | 右侧常显整包统计；独立纵向滚动；ListView 纵向与表格横向滚动 | --verify-ui：选择/目录/搜索统计不变、真实包大小、无属性按钮、900 DIP 布局 |
+| Native Archive Properties | MainWindow.ArchiveView.CreateArchivePropertiesPanel | 本文件 / DESIGN.md | 右侧常显整包统计（200 DIP）；独立纵向滚动；ListView 纵向与表格横向滚动；表头分隔线可拖动调整大小/压缩后/修改时间列宽，行在松手后同步；ZIP/RAR 备注有则显示并可选中复制；条目级属性在列表右键菜单 | --verify-ui：选择/目录/搜索统计不变、真实包大小、无属性按钮（条目属性在右键菜单）、900 DIP 布局、ArchiveComment；列宽拖动为人工鼠标验证 |
 | Native Preview | MainWindow.Preview.ShowPreviewAsync | 本文件 / DESIGN.md | 主窗口所属的独立图片/文本只读窗口；一次激活；加载取消与控件复用 | --verify-ui：文本/图片、重复打开、查找/换行布局稳定、读取中关闭 |
 | Table Selection | app.js archiveTable / selection Set | 本文件 | 当前可见目录 | browser-check.cjs |
 | Select/Listbox | native select | DESIGN.md | native，接受操作系统弹层 | browser-check.cjs |
@@ -50,7 +50,9 @@
 | Windows Compression Menu Setting | MainWindow.Settings / WindowsCompressMenuSettingsStore | 本文件 | 当前用户、Windows 11 24H2+「压缩到」菜单开关；保存前备份、恢复原注册表值 | test.ps1 隔离注册表键 15 项 + 安装脚本恢复 7 项；真实 Explorer 菜单待验收 |
 | Windows Integration | MainWindow.Integration / installer/Integrate-Shell.ps1 | docs/安装包发布.md | 注册修复按钮；Windows 默认应用选择器由系统拥有 | test-installer.ps1 / published UI diagnostic |
 | Archive Editing | MainWindow.ShowArchive / ArchiveEngine.ModifyAsync | 本文件 | 仅 7z/ZIP 添加、删除与同名替换；临时文件成功后替换原包 | tests/New7z.Integration |
-| Drag Extraction | MainWindow.FileListDragItemsStarting / ArchiveEngine.CreateDragData / native DragDataObject | 本文件 | WinUI 负责手势、选择与鼠标反馈；IDataObjectProvider 接入原生延迟数据；按住鼠标悬停不解压，释放后准备真实 CF_HDROP 条目，由系统复制/移动临时文件；准备阶段显示可取消进度 | test-drag-extraction.ps1 / --verify-drag-ui / 真实鼠标验证 / 临时目录清理 |
+| Archive File Copy | MainWindow.CopySelectedAsync / ArchiveEngine.ResolveOutputs / SetClipboardFilesAsync | 本文件 / docs/右键菜单设计.md | 主命令栏「复制选中」、列表右键「复制」与 Ctrl+C；选中条目解压到 `%TEMP%\New7z-copy-*` 后以 CF_HDROP 写入剪贴板供资源管理器粘贴；按可见行顺序；文件夹按根条目整体复制；不支持链接条目；临时副本 7 天后随启动清理。右键「复制文件名 / 复制包内路径」只写文本剪贴板，每行一项，包内路径带 `包名!/` 前缀 | CopyPlanTests / --verify-ui ArchiveContextMenu, ArchiveCopyCommand / --verify-copy |
+| Run Installer In Archive | MainWindow.RunEntryAsync / IsInstallerEntry | 本文件 / docs/操作说明.md | 双击 exe/msi/msix/appx/msu 条目先确认，再解压到 `%TEMP%\New7z-run-*` 并 ShellExecute 启动；失败或拒绝时清理；启动时清理两天前的残留；文件夹与链接条目排除 | --verify-ui InstallerRun |
+| Drag Extraction | MainWindow.FileListDragItemsStarting / ArchiveEngine.CreateDragData / native DragDataObject | 本文件 | WinUI 负责手势、选择与鼠标反馈；IDataObjectProvider 接入原生延迟数据；按住鼠标悬停不解压，释放后准备真实 CF_HDROP 条目，由系统复制/移动临时文件；准备阶段显示可取消进度；释放后的临时副本不按计时删除，下次启动清理超过两天的残留 | test-drag-extraction.ps1 / --verify-drag-ui / 真实鼠标验证 / 下次启动清理 |
 | App Update | MainWindow.Updates / UpdateChecker / UserSettings / ArchiveActivity | docs/安装包发布.md | 启动及运行时按间隔检查；默认每天；多窗口共享时间；手动立即；超时回退；SHA-256 校验、确认后安装；任务期间拒绝安装卸载 | New7z.Settings.Tests / --verify-ui UpdateInterval / test-installer.ps1 |
 
 Date 不适用：只读示例日期，无日期输入控件。引擎 API、登录、远程请求、真实磁盘修改本轮不适用。
