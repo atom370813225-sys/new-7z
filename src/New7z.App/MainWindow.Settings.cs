@@ -34,6 +34,64 @@ public sealed partial class MainWindow
         combo.SelectionChanged+=(_,_)=>{if(combo.SelectedItem is CompressionChoice value)save(value.Value);};
         return combo;
     }
+    private void AddExtractionSettings(StackPanel panel)
+    {
+        var section=Stack(12);
+        section.Children.Add(Text(T("解压位置","Extraction location"),18,true));
+        var enabled=new ToggleSwitch{Header=T("解压到固定目录","Extract to a fixed folder"),IsOn=settings.UseDefaultExtractFolder,OnContent=T("使用","On"),OffContent=T("不使用","Off")};
+        var path=Input(T("默认解压目录","Default extraction folder"),settings.DefaultExtractFolder);
+        path.PlaceholderText=T("完整路径，例如 D:\\解压","Full path, for example D:\\Extracted");
+        var browse=new Button{Content=T("选择文件夹","Choose folder"),Padding=new Thickness(14,7,14,7),HorizontalAlignment=HorizontalAlignment.Left};
+        var subfolder=new CheckBox{Content=T("在该目录下新建与压缩包同名的子文件夹","Create a subfolder named after the archive"),IsChecked=settings.ExtractIntoSubfolder};
+        var feedback=new InfoBar{IsOpen=false,IsClosable=false};
+        section.Children.Add(enabled);section.Children.Add(path);section.Children.Add(browse);section.Children.Add(subfolder);
+        section.Children.Add(Text(T("开启后，「解压到」、批量解压和右键「解压到…」「智能解压」会预先填入该目录，每次解压前仍可修改。关闭时使用压缩包所在的文件夹。","When on, the Extract to dialog, batch extraction and the Explorer Extract to… / Smart Extract commands start with this folder; it can still be changed for each extraction. When off, the archive's own folder is used."),12));
+        section.Children.Add(feedback);
+        panel.Children.Add(Card(section));
+        var updating=false;
+        void UpdateState(){path.IsEnabled=browse.IsEnabled=enabled.IsOn;subfolder.IsEnabled=enabled.IsOn;}
+        void Report(string title,string message,InfoBarSeverity severity){feedback.Title=title;feedback.Message=message;feedback.Severity=severity;feedback.IsOpen=true;}
+        // Only a rooted path is accepted; anything else would silently fall back at extraction time.
+        bool SaveFolder(bool announce)
+        {
+            var text=path.Text?.Trim()??"";
+            var normalized=UserSettings.NormalizeExtractFolder(text);
+            if(text.Length>0&&normalized.Length==0)
+            {
+                path.Text=settings.DefaultExtractFolder;
+                Report(T("默认解压目录无效","Invalid default extraction folder"),T("请填写完整路径，例如 D:\\解压。","Enter a full path, for example D:\\Extracted."),InfoBarSeverity.Error);
+                return false;
+            }
+            var changed=normalized!=settings.DefaultExtractFolder;
+            path.Text=normalized;settings.DefaultExtractFolder=normalized;settings.Save();
+            if(announce||changed)Report(T("已保存","Saved"),normalized.Length==0?T("未填写目录时仍使用压缩包所在的文件夹。","Without a folder, the archive's own folder is used."):T("下次解压会预先填入该目录。","Extractions will start with this folder."),InfoBarSeverity.Success);
+            return true;
+        }
+        enabled.Toggled+=(_,_)=>
+        {
+            if(updating)return;
+            settings.UseDefaultExtractFolder=enabled.IsOn;settings.Save();
+            if(enabled.IsOn&&settings.DefaultExtractFolder.Length==0)
+                Report(T("尚未选择目录","No folder selected yet"),T("请选择或填写默认解压目录；在此之前仍按压缩包所在的文件夹解压。","Choose or enter the default folder; until then the archive's own folder is used."),InfoBarSeverity.Warning);
+        };
+        browse.Click+=async(_,_)=>
+        {
+            try
+            {
+                var selected=await PickFolderAsync();if(selected==null)return;
+                var normalized=UserSettings.NormalizeExtractFolder(selected);
+                if(normalized.Length==0){Report(T("无法使用该目录","That folder cannot be used"),selected,InfoBarSeverity.Error);return;}
+                path.Text=normalized;settings.DefaultExtractFolder=normalized;settings.UseDefaultExtractFolder=true;settings.Save();
+                updating=true;enabled.IsOn=true;updating=false;UpdateState();
+                Report(T("已保存","Saved"),T("下次解压会预先填入该目录。","Extractions will start with this folder."),InfoBarSeverity.Success);
+            }
+            catch(Exception ex){Report(T("无法选择文件夹","Cannot choose folder"),ex.Message,InfoBarSeverity.Error);}
+        };
+        path.LostFocus+=(_,_)=>{if(enabled.IsOn)SaveFolder(false);};
+        path.KeyDown+=(_,e)=>{if(e.Key==Windows.System.VirtualKey.Enter){e.Handled=true;if(enabled.IsOn)SaveFolder(true);}};
+        subfolder.Click+=(_,_)=>{settings.ExtractIntoSubfolder=subfolder.IsChecked==true;settings.Save();};
+        UpdateState();
+    }
     private void AddExplorerSettings(StackPanel panel)
     {
         var store=new ExplorerPreferencesStore();ExplorerPreferences saved;

@@ -59,6 +59,20 @@ internal static class ShellPaths
     public static string SuggestedFolder(IReadOnlyList<string> paths)=>paths.Count==0?Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments):ParentOf(paths[0]);
     public static string SuggestedFileName(IReadOnlyList<string> paths,string format)=>((format is "zst" or "lz4")&&paths.Count==1&&File.Exists(paths[0])?System.IO.Path.GetFileName(paths[0]):SuggestedName(paths))+"."+format;
     public static string CreateTarget(ShellRequest request,string format)=>UniqueOutput(System.IO.Path.Combine(SuggestedFolder(request.Paths),SuggestedFileName(request.Paths,format)));
+    // Null when the user has not configured a fixed extraction folder.
+    public static string? PreferredExtractFolder(UserSettings settings)
+    {
+        if(!settings.UseDefaultExtractFolder)return null;
+        var folder=UserSettings.NormalizeExtractFolder(settings.DefaultExtractFolder);
+        return folder.Length==0?null:folder;
+    }
+    // Empty string means "no preference": callers keep their own folder-based default.
+    public static string PreferredExtractTarget(UserSettings settings,string archivePath)
+    {
+        var folder=PreferredExtractFolder(settings);
+        if(folder==null)return "";
+        return settings.ExtractIntoSubfolder?System.IO.Path.Combine(folder,ArchiveStem(archivePath)):folder;
+    }
     private static string ParentOf(string path)
     {
         var full=System.IO.Path.GetFullPath(path);

@@ -121,13 +121,13 @@ public sealed partial class MainWindow
                 report["FormatIconTheme"]="animal theme resolves and renders eight previews; settings JSON round-trip; custom PNG overrides both themes; reset restores the current theme";
             }
             finally{settings.FormatIconTheme=previousTheme;settings.FormatIcons=previousIcons;settingsCategory="compression";RenderPage();}
-            var taskJob=new ArchiveJob("verification job","verification target"){Status="verification"};
+            var taskJob=new ArchiveJob("verification job","verification target"){Status="verification",Extract=true,KeepCompleted=true};
             var failedJob=new ArchiveJob("verification failed job","verification target"){Status="Failed: verification",Active=false,Percent=100};
             jobs.Add(taskJob);jobs.Add(failedJob);
             SelectPage("tasks");Root.UpdateLayout();
             var taskContent=ContentHost.Children[0];
             CompleteJob(taskJob);await Task.Delay(50);Root.UpdateLayout();
-            if(jobs.Contains(taskJob)||!jobs.Contains(failedJob)||!ReferenceEquals(taskContent,ContentHost.Children[0]))throw new IOException("Task completion did not remove only the successful job in place.");
+            if(jobs.Contains(taskJob)||!completedJobs.Contains(taskJob)||!jobs.Contains(failedJob)||!ReferenceEquals(taskContent,ContentHost.Children[0]))throw new IOException("Task completion did not retire the job in place while keeping its completed card.");
             var taskLabels=new List<string>();
             void ReadTaskLabels(DependencyObject node)
             {
@@ -135,16 +135,23 @@ public sealed partial class MainWindow
                 for(var i=0;i<VisualTreeHelper.GetChildrenCount(node);i++)ReadTaskLabels(VisualTreeHelper.GetChild(node,i));
             }
             ReadTaskLabels(ContentHost);
-            if(taskLabels.Contains(taskJob.Title)||!taskLabels.Contains(failedJob.Title))throw new IOException("Completed task card remained visible or failed task disappeared.");
-            jobs.Remove(failedJob);failedJob.Cancellation.Dispose();taskJob.Cancellation.Dispose();
-            var lastJob=new ArchiveJob("verification last job","verification target");jobs.Add(lastJob);
-            SelectPage("tasks");Root.UpdateLayout();CompleteJob(lastJob);
-            await Task.Delay(50);Root.UpdateLayout();lastJob.Cancellation.Dispose();
-            if(tasksEmptyCard==null||(sharedTaskViews.Count==0&&tasksEmptyCard.Visibility!=Visibility.Visible))throw new IOException("Task empty state did not appear after the last successful job.");
+            Button? openButton=null;
+            void FindOpenButton(DependencyObject node)
+            {
+                if(node is Button button&&button.Content as string==T("打开解压目录","Open extraction folder"))openButton=button;
+                for(var i=0;i<VisualTreeHelper.GetChildrenCount(node);i++)FindOpenButton(VisualTreeHelper.GetChild(node,i));
+            }
+            FindOpenButton(ContentHost);
+            if(!taskLabels.Contains(taskJob.Title)||!taskLabels.Contains(failedJob.Title)||openButton==null)throw new IOException("Completed task card, its open-folder button, or the failed task card did not render.");
+            jobs.Remove(failedJob);failedJob.Cancellation.Dispose();
             SelectPage("home");SelectPage("tasks");Root.UpdateLayout();
             taskLabels.Clear();ReadTaskLabels(ContentHost);
-            if(taskLabels.Contains(taskJob.Title)||taskLabels.Contains(lastJob.Title))throw new IOException("Completed task reappeared after navigation.");
-            report["Tasks"]="successful job removed in place without rebuilding the page; failed job at 100% retained; last completion shows empty state; no completed jobs after navigation";
+            if(!taskLabels.Contains(taskJob.Title))throw new IOException("Completed task card disappeared after navigation.");
+            ClearCompletedJobs();Root.UpdateLayout();taskLabels.Clear();ReadTaskLabels(ContentHost);
+            if(taskLabels.Contains(taskJob.Title))throw new IOException("Completed task cards were not cleared on request.");
+            taskJob.Cancellation.Dispose();
+            if(tasksEmptyCard==null||(sharedTaskViews.Count==0&&tasksEmptyCard.Visibility!=Visibility.Visible))throw new IOException("Task empty state did not appear after the completed tasks were cleared.");
+            report["Tasks"]="successful extraction is kept as a completed card with an open-extraction-folder button; failed job retained; cards survive navigation and clear on request; empty state restored";
             var attempts=0;var retryName="verification retry "+Guid.NewGuid().ToString("N");
             QueueJob(retryName,"verification target",(_,_)=>++attempts==1?Task.FromException(new IOException("expected retry probe")):Task.CompletedTask,false);
             for(var wait=0;wait<600&&jobs.Any(job=>job.Title==retryName&&job.Active);wait++)await Task.Delay(50);

@@ -18,6 +18,7 @@ public sealed partial class ShellTaskWindow:Window
     private readonly ShellRequest? request;
     private readonly string? startupError;
     private readonly ArchiveEngine engine=new();
+    private readonly UserSettings settings=UserSettings.Load();
     private CancellationTokenSource cancellation=new();
     private bool loaded,running,closingDialog,closeWhenDone,windowClosed;
     private int batchIndex;
@@ -123,8 +124,9 @@ public sealed partial class ShellTaskWindow:Window
         TaskScrollViewer.VerticalAlignment=VerticalAlignment.Top;
         Configuration.Visibility=Visibility.Visible;ProgressSection.Visibility=Visibility.Collapsed;
         StartButton.Visibility=Visibility.Visible;CancelButton.Content=T("取消","Cancel");
-        output=new TextBox{Header=request!.Action=="create"?T("保存为","Save as"):T("目标目录","Target folder"),Text=request.Action=="create"?ShellPaths.CreateTarget(request,UserSettings.NormalizeFormat(UserSettings.Load().DefaultFormat)):request.Action=="extract-entries"&&request.Target!=null?request.Target:System.IO.Path.Combine(System.IO.Path.GetDirectoryName(request.Paths[0])!,ShellPaths.ArchiveStem(request.Paths[0]))};
-        if(request.Action=="extract-to"&&request.Paths.Length>1)output.Text=System.IO.Path.GetDirectoryName(request.Paths[0])!;
+        var preferredTarget=request!.Action=="create"?"":ShellPaths.PreferredExtractTarget(settings,request.Paths[0]);
+        output=new TextBox{Header=request!.Action=="create"?T("保存为","Save as"):T("目标目录","Target folder"),Text=request.Action=="create"?ShellPaths.CreateTarget(request,UserSettings.NormalizeFormat(UserSettings.Load().DefaultFormat)):request.Action=="extract-entries"&&request.Target!=null?request.Target:preferredTarget.Length>0?preferredTarget:System.IO.Path.Combine(System.IO.Path.GetDirectoryName(request.Paths[0])!,ShellPaths.ArchiveStem(request.Paths[0]))};
+        if(request.Action=="extract-to"&&request.Paths.Length>1)output.Text=ShellPaths.PreferredExtractFolder(settings)??System.IO.Path.GetDirectoryName(request.Paths[0])!;
         Configuration.Children.Add(output);
         var browse=new Button{Content=T("选择文件夹","Choose Folder")};browse.Click+=Browse_Click;Configuration.Children.Add(browse);
         if(request.Action=="create")
@@ -191,11 +193,11 @@ public sealed partial class ShellTaskWindow:Window
         {
             if(request.Action=="test")return source;
             if(request.Action=="extract-to"&&request.Paths.Length==1)return output!.Text;
-            var parent=request.Action=="extract-to"?output!.Text:System.IO.Path.GetDirectoryName(source)!;
+            var parent=request.Action=="extract-to"?output!.Text:request.Action=="extract-named"?(ShellPaths.PreferredExtractFolder(settings)??System.IO.Path.GetDirectoryName(source)!):System.IO.Path.GetDirectoryName(source)!;
             var target=request.Action=="extract-here"?parent:System.IO.Path.Combine(parent,ShellPaths.ArchiveStem(source));
             return request.Paths.Length>1?ShellPaths.UniqueOutput(target,reserved):target;
         }).ToArray();
-        destination=request.Action is "test" or "extract-named"?System.IO.Path.GetDirectoryName(request.Paths[0]):request.Action=="extract-to"&&request.Paths.Length>1?output!.Text:targets[0];
+        destination=request.Action is "test" or "extract-named"?(ShellPaths.PreferredExtractFolder(settings)??System.IO.Path.GetDirectoryName(request.Paths[0])):request.Action=="extract-to"&&request.Paths.Length>1?output!.Text:targets[0];
     }
     private async Task RunAsync()
     {
@@ -249,9 +251,15 @@ public sealed partial class ShellTaskWindow:Window
         {
             running=false;secret?.SetValue(PasswordBox.PasswordProperty,"");
             CancelButton.Content=T("关闭","Close");CancelButton.IsEnabled=true;
+            var action=request!.Action;var creating=action.StartsWith("create");
             FolderButton.Visibility=destination!=null?Visibility.Visible:Visibility.Collapsed;
+            FolderButton.Content=creating||action=="test"?T("打开文件夹","Open Folder"):T("打开解压目录","Open Extraction Folder");
             bool autoClose=false;
-            try{autoClose=succeeded&&new ExplorerPreferencesStore().Read().AutoCloseOnSuccess;}
+            try
+            {
+                var extracting=!creating&&action!="test";
+                autoClose=succeeded&&(new ExplorerPreferencesStore().Read().AutoCloseOnSuccess||(extracting&&settings.CloseAfterExtraction));
+            }
             catch(Exception){/* A settings read failure keeps the result visible. */}
             await SharedTaskStore.FlushAsync();
             if(closeWhenDone||autoClose){activeDialog?.Hide();if(!windowClosed)Close();}
@@ -280,7 +288,7 @@ public sealed partial class ShellTaskWindow:Window
                         var roots=new HashSet<string>(wanted,StringComparer.Ordinal);
                         entries=entries.Where(e=>roots.Contains(e.NormalizedPath)||roots.Any(r=>e.NormalizedPath.StartsWith(r+"/",StringComparison.Ordinal))).ToList();
                     }
-                    var actualTarget=request.Action=="extract-named"?SmartExtraction.GetDestination(System.IO.Path.GetDirectoryName(source)!,target,entries):target;
+                    var actualTarget=request.Action=="extract-named"?SmartExtraction.GetDestination(ShellPaths.PreferredExtractFolder(settings)??System.IO.Path.GetDirectoryName(source)!,target,entries):target;
                     if(request.Action=="extract-named"&&request.Paths.Length==1)
                     {
                         destination=actualTarget;DestinationText.Text=T("保存到：","Save to: ")+destination;

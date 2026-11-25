@@ -39,7 +39,7 @@ public sealed partial class MainWindow
             var panel=Stack(12);
             panel.Children.Add(Text(T($"已选择 {archives.Length} 个压缩包",$"Selected {archives.Length} archives"),16,true));
             panel.Children.Add(new ScrollViewer{Content=Text(string.Join(Environment.NewLine,archives),12),MaxHeight=160});
-            var destination=Input(T("目标目录","Destination folder"),Path.GetDirectoryName(archives[0])!);panel.Children.Add(destination);
+            var destination=Input(T("目标目录","Destination folder"),ShellPaths.PreferredExtractFolder(settings)??Path.GetDirectoryName(archives[0])!);panel.Children.Add(destination);
             panel.Children.Add(Button(T("选择文件夹","Choose folder"),async(_,_)=>{try{var selected=await PickFolderAsync();if(selected!=null)destination.Text=selected;}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}}));
             var smart=new CheckBox{Content=T("智能解压（只有一个顶层项目时直接解压到目标目录）","Smart extract (one top-level item goes directly into the destination)"),IsChecked=true};panel.Children.Add(smart);
             var policy=new ComboBox{Header=T("遇到同名文件","On name conflict"),ItemsSource=new[]{T("自动重命名，保留两者","Rename, keep both"),T("跳过已有文件","Skip existing files"),T("替换已有文件","Replace existing files")},SelectedIndex=0,HorizontalAlignment=HorizontalAlignment.Stretch};panel.Children.Add(policy);
@@ -85,7 +85,7 @@ public sealed partial class MainWindow
                         key=await AskPasswordAsync();if(key==null)throw new OperationCanceledException(cancellation);
                     }
                 }
-            },false,ended:job=>{result.State=job.Succeeded?2:job.Cancelled?4:3;if(ReferenceEquals(lastBatchResults,results))RefreshBatchSummary();});
+            },false,ended:job=>{result.State=job.Succeeded?2:job.Cancelled?4:3;if(ReferenceEquals(lastBatchResults,results))RefreshBatchSummary();},extract:true);
             if(!accepted){for(var pending=index;pending<results.Length;pending++)results[pending].State=4;break;}
             queued=true;
         }

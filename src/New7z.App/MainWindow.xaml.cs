@@ -42,6 +42,11 @@ public sealed partial class MainWindow:Window
     private Border? tasksEmptyCard;
     private DispatcherTimer? taskRefreshTimer;
     private readonly List<(ArchiveJob Job,Action<ArchiveJob> Handler)> taskSubscriptions=[];
+    // Successful tasks stay listed so their output folder can be reopened.
+    private readonly List<ArchiveJob> completedJobs=[];
+    private readonly Dictionary<ArchiveJob,Border> taskCards=[];
+    private StackPanel? taskCardHost;
+    private const int MaxCompletedJobs=12;
     private readonly List<string> startupFiles=[];
     private nint Hwnd=>WindowNative.GetWindowHandle(this);
     private static SolidColorBrush Secondary=>new(Colors.Gray);
@@ -154,6 +159,7 @@ public sealed partial class MainWindow:Window
     {
         searchTimer?.Stop();
         taskRefreshTimer?.Stop();taskRefreshTimer=null;sharedTaskHost=null;tasksEmptyCard=null;
+        taskCardHost=null;taskCards.Clear();
         sharedTaskViews.Clear();
         foreach(var (job,handler) in taskSubscriptions)job.Updated-=handler;
         taskSubscriptions.Clear();ContentHost.Children.Clear();ContentHost.Children.Add(content);
@@ -389,10 +395,11 @@ public sealed partial class MainWindow:Window
         if(archive==null||selected.Count==0){Notify(T("没有可以解压的条目。","Nothing to extract."));return;}
         var currentArchive=archive;var chosen=selected.ToArray();var key=password;
         var panel=Stack(14);panel.Children.Add(Text($"{System.IO.Path.GetFileName(currentArchive)} · {T(chosen.Length+" 项",chosen.Length+" items")}"));
-        var destination=Input(T("目标目录","Destination folder"),System.IO.Path.Combine(System.IO.Path.GetDirectoryName(currentArchive)!,ShellPaths.ArchiveStem(currentArchive)));panel.Children.Add(destination);
+        var preferred=ShellPaths.PreferredExtractTarget(settings,currentArchive);
+        var destination=Input(T("目标目录","Destination folder"),preferred.Length>0?preferred:System.IO.Path.Combine(System.IO.Path.GetDirectoryName(currentArchive)!,ShellPaths.ArchiveStem(currentArchive)));panel.Children.Add(destination);
         panel.Children.Add(Button(T("选择文件夹","Choose folder"),async(_,_)=>{var path=await PickFolderAsync();if(path!=null)destination.Text=path;}));
         var conflict=new ComboBox{Header=T("遇到同名文件","On name conflict"),ItemsSource=new[]{T("自动重命名，保留两者","Rename, keep both"),T("跳过已有文件","Skip existing files"),T("替换已有文件","Replace existing files")},SelectedIndex=0,HorizontalAlignment=HorizontalAlignment.Stretch};panel.Children.Add(conflict);
-        var note=Text(T("只写入选定目录；不删除源压缩包。","Only writes to the chosen folder; the source archive is not deleted."),12);panel.Children.Add(note);
+        var note=Text(preferred.Length>0?T("已填入设置中的默认解压目录，可以修改。只写入选定目录；不删除源压缩包。","Prefilled from the default extraction folder in Settings; you can change it. Only writes to the chosen folder; the source archive is not deleted."):T("只写入选定目录；不删除源压缩包。","Only writes to the chosen folder; the source archive is not deleted."),12);panel.Children.Add(note);
         var dialog=Dialog(T("解压到","Extract to"),new ScrollViewer{Content=panel,MaxHeight=560,MinWidth=480},T("开始解压","Start extraction"));
         dialog.PrimaryButtonClick+=(_,e)=>{if(string.IsNullOrWhiteSpace(destination.Text)){e.Cancel=true;note.Text=T("请输入目标目录。","Enter a destination folder.");}};
         if(await ShowDialogAsync(dialog)!=ContentDialogResult.Primary)return;
@@ -404,7 +411,7 @@ public sealed partial class MainWindow:Window
         if(chosen.Any(e=>e.Encrypted)&&string.IsNullOrEmpty(key)){key=await AskPasswordAsync();if(key==null)return;password=key;}
         var target=destination.Text;var policy=(ConflictPolicy)conflict.SelectedIndex;
         var name=T("解压 ","Extract ")+System.IO.Path.GetFileName(currentArchive)+T($" · {chosen.Length} 项",$" · {chosen.Length} items");
-        QueueJob(name,target,(progress,cancellation)=>engine.ExtractAsync(currentArchive,chosen,target,policy,key,progress,cancellation));
+        QueueJob(name,target,(progress,cancellation)=>engine.ExtractAsync(currentArchive,chosen,target,policy,key,progress,cancellation),extract:true);
     }
     private async Task AddToArchiveAsync()
     {
@@ -595,13 +602,13 @@ public sealed partial class MainWindow:Window
             for(var attempt=0;attempt<3;attempt++){await Task.Delay(TimeSpan.FromMinutes(2));try{if(!Directory.Exists(path))return;Directory.Delete(path,true);return;}catch{}}
         });
     }
-    private bool QueueJob(string name,string destination,Func<IProgress<EngineProgress>,CancellationToken,Task> operation,bool openTasks=true,Func<Task>? completed=null,Action<ArchiveJob>? ended=null)
+    private bool QueueJob(string name,string destination,Func<IProgress<EngineProgress>,CancellationToken,Task> operation,bool openTasks=true,Func<Task>? completed=null,Action<ArchiveJob>? ended=null,bool extract=false)
     {
         if(installingUpdate){Notify(T("正在准备安装更新，请稍后重试。","An update is being prepared. Try again afterwards."),InfoBarSeverity.Warning);return false;}
         IDisposable activity;
         try{activity=ArchiveActivity.BeginTask();}catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Warning);return false;}
-        var job=new ArchiveJob(name,destination);job.Status=T("等待中","Waiting");
-        job.Retry=()=>{if(!job.Active&&QueueJob(name,destination,operation,openTasks,completed,ended)){jobs.Remove(job);if(page=="tasks")ShowTasks();}};
+        var job=new ArchiveJob(name,destination){Status=T("等待中","Waiting"),Extract=extract,KeepCompleted=extract};
+        job.Retry=()=>{if(!job.Active&&QueueJob(name,destination,operation,openTasks,completed,ended,extract)){jobs.Remove(job);if(page=="tasks")ShowTasks();}};
         jobs.Insert(0,job);if(openTasks)SelectPage("tasks");
         _=Run();return true;
         async Task Run()
@@ -628,55 +635,120 @@ public sealed partial class MainWindow:Window
                 activity.Dispose();if(acquired)queue.Release();
                 ended?.Invoke(job);
                 StatusText.Text=jobs.Any(j=>j.CanCancel)?T("有任务正在处理或排队","Tasks are running or queued"):T("就绪","Ready");
+                // "Close after extraction" waits for the whole queue so a batch is never cut short.
+                if(job.Succeeded&&job.Extract&&settings.CloseAfterExtraction&&!jobs.Any(j=>j.CanCancel))Close();
             }
         }
     }
     private void CompleteJob(ArchiveJob job)
     {
         job.Succeeded=true;job.Active=false;job.Percent=100;job.Status=T("已完成","Completed");
-        jobs.Remove(job);UpdateTasksEmptyState();
+        var listed=jobs.Contains(job);jobs.Remove(job);
+        if(listed&&job.KeepCompleted)
+        {
+            completedJobs.Insert(0,job);
+            while(completedJobs.Count>MaxCompletedJobs){var dropped=completedJobs[^1];RemoveTaskCard(dropped);completedJobs.RemoveAt(completedJobs.Count-1);}
+        }
+        UpdateTasksEmptyState();
     }
     private void UpdateTasksEmptyState()
     {
-        if(tasksEmptyCard!=null)tasksEmptyCard.Visibility=jobs.Count==0&&sharedTaskViews.Count==0?Visibility.Visible:Visibility.Collapsed;
+        if(tasksEmptyCard!=null)tasksEmptyCard.Visibility=jobs.Count==0&&completedJobs.Count==0&&sharedTaskViews.Count==0?Visibility.Visible:Visibility.Collapsed;
     }
     private void ShowTasks()
     {
-        var content=Stack(18);content.Children.Add(Text(T("任务中心","Tasks"),28,true));content.Children.Add(Text(T("任务在后台排队运行，切换页面不会中断。","Tasks run in the background; switching pages does not interrupt them.")));
+        var content=Stack(18);
+        var header=new Grid{ColumnSpacing=12};
+        header.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});header.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
+        header.Children.Add(Text(T("任务中心","Tasks"),28,true));
+        var clear=Button(T("清除已完成","Clear completed"),(_,_)=>ClearCompletedJobs());clear.VerticalAlignment=VerticalAlignment.Center;clear.Visibility=completedJobs.Count==0?Visibility.Collapsed:Visibility.Visible;Grid.SetColumn(clear,1);header.Children.Add(clear);
+        content.Children.Add(header);
+        content.Children.Add(Text(T("任务在后台排队运行，切换页面不会中断。","Tasks run in the background; switching pages does not interrupt them.")));
+        var options=Stack(10);
+        options.Children.Add(Text(T("解压完成后","After extraction"),16,true));
+        var autoClose=new CheckBox{Content=T("自动关闭 New7z 窗口","Close the New7z window automatically"),IsChecked=settings.CloseAfterExtraction};
+        autoClose.Click+=(_,_)=>
+        {
+            settings.CloseAfterExtraction=autoClose.IsChecked==true;
+            try{settings.Save();}
+            catch(Exception ex){settings.CloseAfterExtraction=!settings.CloseAfterExtraction;autoClose.IsChecked=settings.CloseAfterExtraction;Notify(ex.Message,InfoBarSeverity.Error);}
+        };
+        options.Children.Add(autoClose);
+        options.Children.Add(Text(T("勾选后，解压任务成功完成时自动关闭窗口；还有任务排队或运行时会等全部结束后再关闭。设置会被记住。","When checked, the window closes after a successful extraction; while other tasks are queued or running it waits for them to finish. The setting is remembered."),12));
+        content.Children.Add(Card(options));
         batchSummaryText=null;
         if(lastBatchResults!=null){batchSummaryText=Text("",12);content.Children.Add(Card(new ScrollViewer{Content=batchSummaryText,MaxHeight=180}));RefreshBatchSummary();}
-        var emptyCard=Card(Text(T("当前没有任务。新建压缩或解压后，可在这里查看进度；成功完成的任务会自动移除。","No current tasks. Create or extract an archive to see progress here; successful tasks are removed automatically.")));
-        emptyCard.Visibility=jobs.Count==0?Visibility.Visible:Visibility.Collapsed;content.Children.Add(emptyCard);
-        var views=new List<(ArchiveJob Job,Action<ArchiveJob> Handler)>();
-        foreach(var job in jobs)
+        var emptyCard=Card(Text(T("当前没有任务。新建压缩或解压后，可在这里查看进度；已完成的解压会保留在这里，方便打开解压目录。","No current tasks. Create or extract an archive to see progress here; completed extractions stay listed so their folder can be reopened.")));
+        emptyCard.Visibility=jobs.Count==0&&completedJobs.Count==0?Visibility.Visible:Visibility.Collapsed;content.Children.Add(emptyCard);
+        var cardHost=Stack(12);content.Children.Add(cardHost);
+        var cards=new List<(ArchiveJob Job,Border Card,Action Refresh)>();
+        foreach(var job in jobs.Concat(completedJobs))
         {
-            var card=Stack(10);card.Children.Add(Text(job.Title,16,true));card.Children.Add(Text(job.Destination,12));
-            var current=Text(job.CurrentItem,12);current.MinHeight=18;current.MaxLines=1;current.TextTrimming=TextTrimming.CharacterEllipsis;current.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];card.Children.Add(current);
-            var statusLine=new Grid();var status=Text(job.Status);statusLine.Children.Add(status);var percent=Text(job.PercentText,12);percent.HorizontalAlignment=HorizontalAlignment.Right;percent.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];statusLine.Children.Add(percent);card.Children.Add(statusLine);
-            var bar=new ProgressBar{Minimum=0,Maximum=100,Value=job.Percent,IsIndeterminate=job.Active&&job.Indeterminate};card.Children.Add(bar);
-            var transfer=Text(job.TransferText,12);transfer.MinHeight=18;card.Children.Add(transfer);
-            var actions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=8};var cancel=Button(T("取消任务","Cancel task"),async(_,_)=>{var d=Dialog(T("取消任务？","Cancel this task?"),Text(T("已完成的文件将保留，当前未完成的临时文件会清理。","Completed files are kept; unfinished temporary files are cleaned up.")),T("取消任务","Cancel task"));d.DefaultButton=ContentDialogButton.Close;if(await ShowDialogAsync(d)==ContentDialogResult.Primary)job.Cancellation.Cancel();});cancel.IsEnabled=job.CanCancel;actions.Children.Add(cancel);
-            var retry=Button(T("重试","Retry"),(_,_)=>job.Retry?.Invoke());retry.IsEnabled=!job.Active&&job.Retry!=null;retry.Visibility=job.Retry==null?Visibility.Collapsed:Visibility.Visible;actions.Children.Add(retry);
-            ToolTipService.SetToolTip(retry,T("按原参数重试；同名文件按原冲突策略处理。","Retry with the original settings and conflict policy."));
-            actions.Children.Add(Button(T("打开文件夹","Open folder"),(_,_)=>{var path=Directory.Exists(job.Destination)?job.Destination:System.IO.Path.GetDirectoryName(job.Destination);if(path!=null&&Directory.Exists(path)){var info=new ProcessStartInfo("explorer.exe"){UseShellExecute=false};info.ArgumentList.Add(path);Process.Start(info);}}));card.Children.Add(actions);var border=Card(card);content.Children.Add(border);
-            void Refresh()
-            {
-                if(!jobs.Contains(job))
-                {
-                    content.Children.Remove(border);
-                    foreach(var view in taskSubscriptions.Where(view=>ReferenceEquals(view.Job,job)).ToArray()){view.Job.Updated-=view.Handler;taskSubscriptions.Remove(view);}
-                    UpdateTasksEmptyState();return;
-                }
-                status.Text=job.Status;percent.Text=job.PercentText;bar.Value=job.Percent;cancel.IsEnabled=job.CanCancel;
-                current.Text=job.CurrentItem;transfer.Text=job.TransferText;bar.IsIndeterminate=job.Active&&job.Indeterminate;retry.IsEnabled=!job.Active&&job.Retry!=null;
-            }
-            Action<ArchiveJob> handler=_=>DispatcherQueue.TryEnqueue(Refresh);views.Add((job,handler));
+            var (border,refresh)=BuildTaskCard(job,cardHost);cardHost.Children.Add(border);cards.Add((job,border,refresh));
         }
         var sharedHost=Stack(12);content.Children.Add(sharedHost);
         ShowContent(new ScrollViewer{Content=content});
-        sharedTaskHost=sharedHost;tasksEmptyCard=emptyCard;
-        foreach(var view in views){view.Job.Updated+=view.Handler;taskSubscriptions.Add(view);}
+        sharedTaskHost=sharedHost;tasksEmptyCard=emptyCard;taskCardHost=cardHost;
+        foreach(var item in cards)
+        {
+            var job=item.Job;var refresh=item.Refresh;
+            taskCards[job]=item.Card;
+            Action<ArchiveJob> handler=_=>DispatcherQueue.TryEnqueue(()=>refresh());
+            job.Updated+=handler;taskSubscriptions.Add((job,handler));
+        }
         RefreshSharedTaskCards();taskRefreshTimer=new DispatcherTimer{Interval=TimeSpan.FromSeconds(1)};taskRefreshTimer.Tick+=(_,_)=>RefreshSharedTaskCards();taskRefreshTimer.Start();
+    }
+    private (Border Card,Action Refresh) BuildTaskCard(ArchiveJob job,StackPanel host)
+    {
+        var card=Stack(10);card.Children.Add(Text(job.Title,16,true));card.Children.Add(Text(job.Destination,12));
+        var current=Text(job.CurrentItem,12);current.MinHeight=18;current.MaxLines=1;current.TextTrimming=TextTrimming.CharacterEllipsis;current.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];card.Children.Add(current);
+        var statusLine=new Grid();var status=Text(job.Status);statusLine.Children.Add(status);var percent=Text(job.PercentText,12);percent.HorizontalAlignment=HorizontalAlignment.Right;percent.Foreground=(Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];statusLine.Children.Add(percent);card.Children.Add(statusLine);
+        var bar=new ProgressBar{Minimum=0,Maximum=100,Value=job.Percent,IsIndeterminate=job.Active&&job.Indeterminate};card.Children.Add(bar);
+        var transfer=Text(job.TransferText,12);transfer.MinHeight=18;card.Children.Add(transfer);
+        var actions=new StackPanel{Orientation=Orientation.Horizontal,Spacing=8};
+        var cancel=Button(T("取消任务","Cancel task"),async(_,_)=>{var d=Dialog(T("取消任务？","Cancel this task?"),Text(T("已完成的文件将保留，当前未完成的临时文件会清理。","Completed files are kept; unfinished temporary files are cleaned up.")),T("取消任务","Cancel task"));d.DefaultButton=ContentDialogButton.Close;if(await ShowDialogAsync(d)==ContentDialogResult.Primary)job.Cancellation.Cancel();});actions.Children.Add(cancel);
+        var retry=Button(T("重试","Retry"),(_,_)=>job.Retry?.Invoke());ToolTipService.SetToolTip(retry,T("按原参数重试；同名文件按原冲突策略处理。","Retry with the original settings and conflict policy."));actions.Children.Add(retry);
+        var open=Button(T("打开解压目录","Open extraction folder"),(_,_)=>OpenJobFolder(job));ToolTipService.SetToolTip(open,T("在资源管理器中打开输出所在的目录。","Open the folder that holds the output in Explorer."));actions.Children.Add(open);
+        card.Children.Add(actions);
+        var border=Card(card);
+        void Refresh()
+        {
+            if(!jobs.Contains(job)&&!completedJobs.Contains(job))
+            {
+                host.Children.Remove(border);taskCards.Remove(job);
+                foreach(var view in taskSubscriptions.Where(view=>ReferenceEquals(view.Job,job)).ToArray()){view.Job.Updated-=view.Handler;taskSubscriptions.Remove(view);}
+                UpdateTasksEmptyState();return;
+            }
+            status.Text=job.Status;percent.Text=job.PercentText;bar.Value=job.Percent;bar.IsIndeterminate=job.Active&&job.Indeterminate;
+            current.Text=job.CurrentItem;transfer.Text=job.TransferText;
+            cancel.IsEnabled=job.CanCancel;cancel.Visibility=job.Succeeded||job.Cancelled?Visibility.Collapsed:Visibility.Visible;
+            retry.IsEnabled=!job.Active&&job.Retry!=null;retry.Visibility=job.Succeeded||job.Retry==null?Visibility.Collapsed:Visibility.Visible;
+            open.Content=job.Extract?T("打开解压目录","Open extraction folder"):T("打开所在文件夹","Open containing folder");
+        }
+        Refresh();
+        return (border,Refresh);
+    }
+    private void OpenJobFolder(ArchiveJob job)
+    {
+        try
+        {
+            var path=job.Destination;
+            if(!Directory.Exists(path))path=System.IO.Path.GetDirectoryName(path);
+            if(path==null||!Directory.Exists(path))throw new IOException(job.Extract?T("解压目录还没有创建。","The extraction folder has not been created yet."):T("输出目录不存在。","The output folder does not exist."));
+            var info=new ProcessStartInfo("explorer.exe"){UseShellExecute=false};info.ArgumentList.Add(path);Process.Start(info);
+        }
+        catch(Exception ex){Notify(ex.Message,InfoBarSeverity.Error);}
+    }
+    private void RemoveTaskCard(ArchiveJob job)
+    {
+        foreach(var view in taskSubscriptions.Where(view=>ReferenceEquals(view.Job,job)).ToArray()){view.Job.Updated-=view.Handler;taskSubscriptions.Remove(view);}
+        if(taskCards.Remove(job,out var card))taskCardHost?.Children.Remove(card);
+    }
+    private void ClearCompletedJobs()
+    {
+        foreach(var job in completedJobs)RemoveTaskCard(job);
+        completedJobs.Clear();
+        if(page=="tasks")ShowTasks();
     }
     private readonly Dictionary<string,(Border Card,Action<SharedTask> Update)> sharedTaskViews=[];
     private bool refreshingSharedTasks;
@@ -842,7 +914,7 @@ public sealed partial class MainWindow:Window
         panel.Children.Add(Text(T("选择要调整的设置类别。","Choose a category to adjust.")));
         var rows=Stack(8);
         foreach(var (category,glyph,title,description) in new[]{
-            ("general","",T("常规","General"),T("界面语言、应用主题和应用更新","Language, theme and app updates")),
+            ("general","",T("常规","General"),T("界面语言、应用主题、解压位置和应用更新","Language, theme, extraction location and app updates")),
             ("compression","",T("压缩","Compression"),T("默认压缩格式和压缩方法","Default archive format and compression method")),
             ("explorer","",T("右键菜单","Context menu"),T("资源管理器菜单命令和任务弹出窗口","Explorer menu commands and the task popup")),
             ("appearance","",T("外观与图标","Appearance and icons"),T("应用内品牌图标和压缩格式图标","In-app brand and archive format icons")),
@@ -901,6 +973,7 @@ public sealed partial class MainWindow:Window
         language.SelectionChanged+=(_,_)=>{settings.Language=LanguageCodes[language.SelectedIndex];settings.Save();ApplyLanguage();SaveExplorerLanguage();RenderPage();};
         panel.Children.Add(Card(language));
         var theme=new ComboBox{Header=T("应用主题","Theme"),ItemsSource=new[]{T("跟随系统","System"),T("浅色","Light"),T("深色","Dark")},SelectedIndex=Math.Max(0,Array.IndexOf(ThemeCodes,NormalizeTheme(settings.Theme))),MinWidth=240};theme.SelectionChanged+=(_,_)=>{settings.Theme=ThemeCodes[theme.SelectedIndex];settings.Save();ApplyTheme();};panel.Children.Add(Card(theme));
+        AddExtractionSettings(panel);
     }
     private void AddAboutSettings(StackPanel panel)
     {

@@ -13,6 +13,10 @@ public sealed class UserSettings
     public string DefaultFormat {get;set;}="7z";
     public string Default7zMethod {get;set;}="LZMA2";
     public string DefaultZipMethod {get;set;}="Deflate";
+    public bool UseDefaultExtractFolder {get;set;}
+    public string DefaultExtractFolder {get;set;}="";
+    public bool ExtractIntoSubfolder {get;set;}=true;
+    public bool CloseAfterExtraction {get;set;}
     public Dictionary<string,string> FormatIcons {get;set;}=[];
     public bool AutoCheckUpdates {get;set;}=true;
     public int UpdateCheckIntervalMinutes {get;set;}=1440;
@@ -23,6 +27,19 @@ public sealed class UserSettings
     private string? storageFolder,baseline;
     private string StorageFolder=>storageFolder??Folder;
     public static string NormalizeFormat(string? value)=>value?.ToLowerInvariant() switch{"zip"=>"zip","tar"=>"tar","zst"=>"zst","lz4"=>"lz4",_=>"7z"};
+    // A configured folder must be a rooted path; anything else falls back to the archive's own folder.
+    public static string NormalizeExtractFolder(string? value)
+    {
+        var folder=(value??"").Trim().Trim('"');
+        if(folder.Length==0)return "";
+        try
+        {
+            if(!Path.IsPathFullyQualified(folder))return "";
+            var full=Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar);
+            return full.EndsWith(':')?full+Path.DirectorySeparatorChar:full;
+        }
+        catch{return "";}
+    }
 
     public static UserSettings Load()=>Load(Folder);
     internal static UserSettings Load(string folder)
@@ -35,6 +52,8 @@ public sealed class UserSettings
         value.DefaultFormat=NormalizeFormat(value.DefaultFormat);
         value.Default7zMethod=CompressionMethods.Normalize("7z",value.Default7zMethod)??CompressionMethods.Default("7z");
         value.DefaultZipMethod=CompressionMethods.Normalize("zip",value.DefaultZipMethod)??CompressionMethods.Default("zip");
+        value.DefaultExtractFolder=NormalizeExtractFolder(value.DefaultExtractFolder);
+        if(value.DefaultExtractFolder.Length==0)value.UseDefaultExtractFolder=false;
         if(!UpdateIntervals.Contains(value.UpdateCheckIntervalMinutes))value.UpdateCheckIntervalMinutes=1440;
         value.baseline=Serialize(value);return value;
     }
@@ -87,6 +106,8 @@ public sealed class UserSettings
     {
         Theme=value.Theme;Language=value.Language;IconPath=value.IconPath;FormatIconTheme=value.FormatIconTheme;
         DefaultFormat=value.DefaultFormat;Default7zMethod=value.Default7zMethod;DefaultZipMethod=value.DefaultZipMethod;
+        UseDefaultExtractFolder=value.UseDefaultExtractFolder;DefaultExtractFolder=value.DefaultExtractFolder;
+        ExtractIntoSubfolder=value.ExtractIntoSubfolder;CloseAfterExtraction=value.CloseAfterExtraction;
         FormatIcons=value.FormatIcons;Recent=value.Recent;AutoCheckUpdates=value.AutoCheckUpdates;
         UpdateCheckIntervalMinutes=value.UpdateCheckIntervalMinutes;LastUpdateCheckUtc=value.LastUpdateCheckUtc;
         baseline=Serialize(this);

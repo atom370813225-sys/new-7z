@@ -33,6 +33,9 @@ public sealed class ArchiveJob(string title,string destination)
     public Action? Retry {get;set;}
     public bool Succeeded {get;set;}
     public bool Cancelled {get;set;}
+    // Extraction jobs keep a completed card so the destination can be reopened; drag jobs do not.
+    public bool Extract {get;set;}
+    public bool KeepCompleted {get;set;}
     public bool Indeterminate {get;private set;}=true;
     private readonly TransferTracker transfer=new();
     public string TransferText

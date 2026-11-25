@@ -37,6 +37,15 @@ try
     a.AutoCheckUpdates=true;a.Save();Assert(a.TryReserveUpdateCheck(now,false),"Clock rollback does not suppress checks forever");
     var old=Path.Combine(root,"migration");Directory.CreateDirectory(old);await File.WriteAllTextAsync(Path.Combine(old,"settings.json"),"{\"Theme\":\"dark\"}");
     Assert(UserSettings.Load(old) is {Theme:"dark",UpdateCheckIntervalMinutes:1440},"Existing settings migrate to the daily interval");
+    var extractFolder=Path.Combine(root,"解压目标");
+    Assert(UserSettings.NormalizeExtractFolder(extractFolder)==extractFolder,"Rooted extraction folder is kept");
+    Assert(UserSettings.NormalizeExtractFolder("relative\\folder").Length==0,"Relative extraction folder is rejected");
+    Assert(UserSettings.NormalizeExtractFolder("\""+extractFolder+"\"").Length>0,"Quoted extraction folder is unwrapped");
+    Assert(UserSettings.NormalizeExtractFolder("").Length==0,"Empty extraction folder stays empty");
+    a=UserSettings.Load(root);a.UseDefaultExtractFolder=true;a.DefaultExtractFolder=extractFolder;a.ExtractIntoSubfolder=false;a.CloseAfterExtraction=true;a.Save();
+    Assert(UserSettings.Load(root) is {UseDefaultExtractFolder:true,ExtractIntoSubfolder:false,CloseAfterExtraction:true}&&UserSettings.Load(root).DefaultExtractFolder==extractFolder,"Extraction location and close behavior persist");
+    var badFolder=Path.Combine(root,"bad-folder");Directory.CreateDirectory(badFolder);await File.WriteAllTextAsync(Path.Combine(badFolder,"settings.json"),"{\"UseDefaultExtractFolder\":true,\"DefaultExtractFolder\":\"relative\\\\dir\"}");
+    Assert(UserSettings.Load(badFolder) is {UseDefaultExtractFolder:false,DefaultExtractFolder:""},"A stored relative extraction folder is discarded and disables the fixed folder");
     var activity=Path.Combine(root,"activity.lock");
     using(var first=ArchiveActivity.BeginTask(activity))
     using(var second=ArchiveActivity.BeginTask(activity))Assert(ArchiveActivity.TryBeginInstall(activity)==null,"Installation cannot interrupt concurrent tasks");
