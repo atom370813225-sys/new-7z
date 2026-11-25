@@ -71,6 +71,7 @@ public sealed partial class MainWindow
         {
             if(updating)return;
             settings.UseDefaultExtractFolder=enabled.IsOn;settings.Save();
+            UpdateState();
             if(enabled.IsOn&&settings.DefaultExtractFolder.Length==0)
                 Report(T("尚未选择目录","No folder selected yet"),T("请选择或填写默认解压目录；在此之前仍按压缩包所在的文件夹解压。","Choose or enter the default folder; until then the archive's own folder is used."),InfoBarSeverity.Warning);
         };
